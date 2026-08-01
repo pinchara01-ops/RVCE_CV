@@ -6,6 +6,8 @@ This module is the **Query & Retrieval** half of a multimodal video search syste
 
 It was built standalone against a seeded dummy Qdrant collection, in parallel with a teammate's **Processing/Indexing** module (which populates the real collection from actual video). A third teammate integrates both by pointing this module's `/search` endpoint at the real collection — no code changes required here, as long as the indexing pipeline matches the contract in **Section 4**.
 
+A demo frontend lives in `/frontend` and already calls this module's real `/search` endpoint — see **Section 10**.
+
 ## 2. Architecture
 
 ```
@@ -269,5 +271,27 @@ python demo_queries.py
 4. Window merging (chained, cross-video-safe)
 
 Plus two dedicated hardening passes: a full integration/failure-path audit (Qdrant-down, malformed input, boundary top_k values, schema drift detection) and a comprehensive realistic-scenario pass (query variety, video/window variety, concurrency, cold start). Two upstream stages were built, evaluated, and then removed per team review as the architecture matured: a keyword-based query router (removed for a real substring-matching bug and a hard vocabulary ceiling - see Section 2), and an LLM-based VLM summarization stage (removed earlier for latency/reliability reasons). The current pipeline always searches all 4 modalities and relies on RRF fusion to suppress irrelevant ones through rank.
+
+## 10. Frontend
+
+A demo frontend lives in `/frontend` — React + Vite, two-page flow (upload/landing → search results), styled to an editorial-archive design system (warm paper background, Fraunces/Inter/IBM Plex Mono, rust/olive/mustard accents). Not part of the Query & Retrieval contract itself; documented here because it already talks to this module directly.
+
+**Run it:**
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173
+```
+Needs the backend running (`uvicorn query_retrieval.api:app`, default `http://localhost:8000`) for real results — see Section 5. Override the backend URL with a `VITE_API_BASE_URL` env var if it's not on the default port.
+
+**Integration point:** `frontend/src/api/searchApi.js` is the one place that calls `POST /search`. It calls the real backend directly (not mock-only) since the backend is already stable — falls back to `frontend/src/data/mockResults.js` only if the backend is unreachable, so the UI never shows a blank page. Response shape matches `SearchResponse`/`SearchResultItem` from `query_retrieval/models.py` exactly, confirmed live (real fetch call, real CORS headers, real data) - no adapter needed if the contract doesn't change.
+
+**Backend change made for this:** `api.py` now has `CORSMiddleware` (`allow_origins=["*"]`) - without it the browser silently blocks every request from the Vite dev server's origin. Wide open is fine for a team demo with no auth; tighten before exposing this beyond that.
+
+**What's mocked, deliberately:**
+- The landing page's "upload" flow simulates a processing delay — there's no real ingestion endpoint to call yet (that's the Processing/Indexing teammate's module, out of scope here).
+- Video thumbnails and the timeline-position bar per result are placeholder patterns / derived pseudo-durations — this module never dealt with actual video files, only Qdrant windows/payloads, so there's nothing real to render yet. Stays mocked until file serving is decided (likely the integration teammate's call).
+
+**Not yet verified:** no headless-browser tool was available to screenshot/click-test the actual rendered UI in this environment. What's confirmed is that it builds cleanly, every page/component transforms without error, and the real backend integration works end-to-end (verified via a simulated browser fetch, not just code review). A manual visual pass in an actual browser is still worth doing before demo day.
 
 **Explicitly out of scope for this module** (Processing team's responsibility): video file storage, frame extraction, actual transcription/captioning/embedding generation, writing points into Qdrant. This module only *reads* from the `video_windows` collection per the contract in Section 4 — it never writes indexing data.

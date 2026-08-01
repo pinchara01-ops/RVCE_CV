@@ -4,6 +4,7 @@ real query encoders, unweighted RRF fusion, and window merging.
 import logging
 
 from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,6 +22,18 @@ from query_retrieval.qdrant_client import (
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Query & Retrieval Module", version="0.1.0")
+
+# The frontend (Vite dev server, localhost:5173) calls this API from a
+# different origin than it's served on - without CORS enabled the browser
+# blocks every fetch() with no server-side error to debug. Wide open
+# origins are fine here (no auth, no cookies, hackathon demo); tighten if
+# this ever serves real traffic beyond the team's own frontend.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _SEARCH_FNS = {
     "visual": search_visual,

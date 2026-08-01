@@ -1,0 +1,137 @@
+.result-row {
+  display: flex;
+  gap: 20px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.result-row__thumb {
+  position: relative;
+  flex: none;
+  width: 120px;
+  height: 74px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #e9e1cf;
+  border: 1px solid var(--color-border);
+}
+
+.result-row__thumb-pattern {
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(43, 38, 34, 0.06) 0px,
+    rgba(43, 38, 34, 0.06) 2px,
+    transparent 2px,
+    transparent 10px
+  );
+}
+
+.result-row__timeline {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(43, 38, 34, 0.18);
+}
+
+.result-row__timeline-segment {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: var(--color-rust);
+}
+
+.result-row__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.result-row__meta-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.result-row__video-id {
+  font-size: 12px;
+  color: var(--color-ink-muted);
+}
+
+.result-row__timestamp {
+  font-size: 11px;
+  color: var(--color-rust);
+  background: rgba(184, 83, 47, 0.09);
+  border: 1px solid rgba(184, 83, 47, 0.25);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.result-row__caption {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--color-ink);
+}
+
+.result-row__transcript {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--color-ink-faint);
+}
+
+.result-row__tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 3px 10px;
+  border: 1px solid;
+  text-transform: lowercase;
+}
+
+.tag--mustard {
+  color: #8a6417;
+  background: rgba(214, 164, 76, 0.16);
+  border-color: rgba(214, 164, 76, 0.45);
+}
+
+.tag--olive {
+  color: var(--color-olive);
+  background: rgba(95, 111, 82, 0.13);
+  border-color: rgba(95, 111, 82, 0.35);
+}
+
+.tag--rust {
+  color: var(--color-rust);
+  background: rgba(184, 83, 47, 0.1);
+  border-color: rgba(184, 83, 47, 0.32);
+}
+
+.tag--neutral {
+  color: var(--color-ink-muted);
+  background: rgba(43, 38, 34, 0.06);
+  border-color: var(--color-border-strong);
+}
+
+.result-row__score {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-ink-muted);
+}

@@ -1,0 +1,126 @@
+.dropzone-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  margin: 40px auto 0;
+}
+
+/* Scattered offset "index cards" peeking from behind the corners - real
+   accent-colored blocks with visible borders, not faint shadow-colored
+   duplicates. Sized/rotated/offset enough to clearly read as separate
+   overlapping cards rather than a soft shadow. */
+.dropzone-decor {
+  position: absolute;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border-width: 1.5px;
+  border-style: solid;
+  z-index: 0;
+  box-shadow: 0 10px 24px -12px rgba(43, 38, 34, 0.25);
+}
+
+.dropzone-decor__label {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+}
+
+.dropzone-decor--rust {
+  width: 220px;
+  height: 150px;
+  top: -34px;
+  left: -46px;
+  background: rgba(184, 83, 47, 0.22);
+  border-color: rgba(184, 83, 47, 0.65);
+  color: #7a3115;
+  transform: rotate(-9deg);
+}
+
+.dropzone-decor--olive {
+  width: 190px;
+  height: 120px;
+  bottom: -38px;
+  right: -40px;
+  background: rgba(95, 111, 82, 0.22);
+  border-color: rgba(95, 111, 82, 0.6);
+  color: #33401f;
+  transform: rotate(8deg);
+}
+
+.dropzone-decor--mustard {
+  width: 150px;
+  height: 96px;
+  top: -30px;
+  right: 6%;
+  background: rgba(214, 164, 76, 0.32);
+  border-color: rgba(214, 164, 76, 0.7);
+  color: #6b4c11;
+  transform: rotate(13deg);
+}
+
+.dropzone {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 420px;
+  padding: 56px 48px;
+  text-align: center;
+  background: var(--color-surface);
+  border: 2px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-ambient);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease;
+}
+
+.dropzone:hover {
+  border-color: rgba(184, 83, 47, 0.5);
+}
+
+.dropzone--drag {
+  border-color: var(--color-rust);
+  background: #fdf5ee;
+}
+
+.dropzone__label {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  color: var(--color-ink);
+  max-width: 420px;
+}
+
+.dropzone__sub {
+  font-size: 14px;
+  color: var(--color-ink-muted);
+  max-width: 380px;
+  line-height: 1.5;
+}
+
+.dropzone__hint {
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  color: var(--color-ink-faint);
+  margin-top: 6px;
+}
+
+.dropzone__spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 3px solid var(--color-border-strong);
+  border-top-color: var(--color-rust);
+  animation: dropzone-spin 0.8s linear infinite;
+}
+
+@keyframes dropzone-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
