@@ -1,0 +1,12 @@
+pydantic>=2.7,<3
+qdrant-client>=1.10,<2
+faster-whisper>=1.0,<2
+transformers>=4.45,<5
+sentence-transformers>=3.0,<4
+torch>=2.2,<3
+opencv-python-headless>=4.9,<5
+pillow>=10,<12
+librosa>=0.10,<1
+numpy>=1.26,<3
+pytest>=8,<9
+ruff>=0.6,<1
