@@ -1,7 +1,9 @@
 """External API contract (FastAPI). Wired to real Qdrant search functions,
-real query encoders, unweighted RRF fusion, and window merging.
+real query encoders, weighted RRF fusion, window merging, optional query
+decomposition, and optional async candidate verification.
 """
 import logging
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, HTTPException, Response
@@ -10,9 +12,17 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.basicConfig(level=logging.INFO)
 
 from query_retrieval import config, encoders
+from query_retrieval.decomposition import decompose_query
 from query_retrieval.fusion import rrf_fuse
 from query_retrieval.merge_windows import merge_windows
-from query_retrieval.models import SearchRequest, SearchResponse, SearchResultItem
+from query_retrieval.models import (
+    SearchRequest,
+    SearchResponse,
+    SearchResultItem,
+    VerificationResult,
+    VerifyRequest,
+    VerifyResponse,
+)
 from query_retrieval.qdrant_client import (
     QdrantSearchError,
     search_audio,
@@ -20,6 +30,7 @@ from query_retrieval.qdrant_client import (
     search_speech,
     search_visual,
 )
+from query_retrieval.verification import verify_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +66,31 @@ _search_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="qdrant-
 # latency instead of a cheap health poll catching that window.
 _encoders_ready = False
 
+# Bounded in-memory cache of recent /search results, keyed by window_id -
+# lets /verify look up a candidate's evidence (transcript/caption/
+# matched_modalities) by candidate_id alone, without the frontend having
+# to resend the full candidate payload. Single-process, not persisted -
+# fine for a demo; a multi-worker deployment would need a shared store
+# (Redis or similar) instead. Only populated when ENABLE_VERIFICATION is
+# on, since nothing ever reads it otherwise.
+_RECENT_RESULTS_CACHE_SIZE = 500
+_recent_results: "OrderedDict[str, SearchResultItem]" = OrderedDict()
+
+# Required conditions from the most recent decomposition of a given query
+# string - /verify needs these but a client may not resend them (the
+# VerifyRequest schema allows it to supply its own; this is just a
+# convenience default when it doesn't). Same bounded/single-process
+# caveats as _recent_results.
+_last_required_conditions: "OrderedDict[str, list[str]]" = OrderedDict()
+
+
+def _remember_for_verification(results: list[SearchResultItem]) -> None:
+    for result in results:
+        _recent_results[result.window_id] = result
+        _recent_results.move_to_end(result.window_id)
+    while len(_recent_results) > _RECENT_RESULTS_CACHE_SIZE:
+        _recent_results.popitem(last=False)
+
 
 @app.on_event("startup")
 def _load_encoders() -> None:
@@ -68,25 +104,53 @@ def _load_encoders() -> None:
 @app.post("/search", response_model=SearchResponse)
 def search(request: SearchRequest) -> SearchResponse:
     """Encode the query for all 4 modalities, search all 4 in parallel,
-    fuse via unweighted RRF, and merge into a ranked list of candidate
-    regions.
+    fuse via (optionally weighted) RRF, and merge into a ranked list of
+    candidate regions.
 
-    No query routing: all 4 modalities are always encoded and searched -
-    RRF's rank-based fusion naturally suppresses modalities irrelevant to
-    a given query rather than an upstream router deciding in advance which
-    to search. Per-modality search depth is config.DEFAULT_TOP_K (a fixed
-    candidate pool) - fusion is left untruncated so merging sees every
-    candidate before anything is dropped; request.top_k is applied last,
-    to the final merged regions.
+    No query routing: all 4 modalities are always encoded and searched,
+    regardless of whether decomposition is on - RRF's rank-based fusion
+    (optionally weighted by decomposition) naturally suppresses modalities
+    irrelevant to a given query, rather than an upstream gate deciding in
+    advance which to search at all. Per-modality search depth is
+    config.DEFAULT_TOP_K (a fixed candidate pool) - fusion is left
+    untruncated so merging sees every candidate before anything is
+    dropped; request.top_k is applied last, to the final merged regions.
 
-    Encoding (encoders.encode_query) and search (the 4 calls below) each
-    run their own modality-calls concurrently rather than sequentially -
-    see encoders.py and the thread pool above. A genuine failure (every
-    encoder failed, or Qdrant is unreachable) raises HTTPException(503)
-    with a descriptive error rather than silently returning an empty
-    result set that would be indistinguishable from "no matches".
+    When ENABLE_QUERY_DECOMPOSITION is off, this function's behavior is
+    byte-identical to before decomposition existed: encoders.encode_query()
+    (same query text to all 4 modalities) and rrf_fuse() with no weights
+    (its exact original unweighted formula) - see fusion.py and the
+    "Kill switch reference" table in the README. When on, decompose_query()
+    runs first (see decomposition.py's three-tier cache/live/fallback
+    ladder, hard-timeout bounded so this can add at most
+    DECOMPOSITION_TIMEOUT_SECONDS of latency even in the worst case), each
+    modality is encoded with its own decomposition-specific query text via
+    encoders.encode_decomposed(), and fusion is weighted by the
+    decomposition's per-modality weights.
+
+    Verification (if ENABLE_VERIFICATION) does NOT happen here - it's a
+    separate, later POST /verify call the frontend makes after these
+    results have already rendered, specifically so a slow/failed LLM
+    verification call can never add latency to this endpoint.
+
+    Encoding and search each run their own modality-calls concurrently
+    rather than sequentially - see encoders.py and the thread pool above.
+    A genuine failure (every encoder failed, or Qdrant is unreachable)
+    raises HTTPException(503) with a descriptive error rather than
+    silently returning an empty result set that would be indistinguishable
+    from "no matches".
     """
-    query_vectors = encoders.encode_query(request.query)
+    weights = None
+    required_conditions: list[str] = []
+
+    if config.ENABLE_QUERY_DECOMPOSITION:
+        decomposition = decompose_query(request.query)
+        query_vectors = encoders.encode_decomposed(decomposition)
+        weights = decomposition.weights
+        required_conditions = decomposition.required_conditions
+    else:
+        query_vectors = encoders.encode_query(request.query)
+
     if not query_vectors:
         raise HTTPException(
             status_code=503,
@@ -108,7 +172,7 @@ def search(request: SearchRequest) -> SearchResponse:
             detail=f"Qdrant is unreachable; search is unavailable: {exc}",
         ) from exc
 
-    fused = rrf_fuse(modality_hits)
+    fused = rrf_fuse(modality_hits, weights=weights)
     regions = merge_windows(fused)[: request.top_k]
 
     results = [
@@ -126,12 +190,60 @@ def search(request: SearchRequest) -> SearchResponse:
         )
         for region in regions
     ]
+
+    if config.ENABLE_VERIFICATION:
+        _remember_for_verification(results)
+        _last_required_conditions[request.query] = required_conditions
+        _last_required_conditions.move_to_end(request.query)
+        while len(_last_required_conditions) > _RECENT_RESULTS_CACHE_SIZE:
+            _last_required_conditions.popitem(last=False)
+
     return SearchResponse(results=results)
 
 
+@app.post("/verify", response_model=VerifyResponse)
+def verify(request: VerifyRequest) -> VerifyResponse:
+    """Verify up to VERIFICATION_TOP_N candidates (in the order given -
+    expected to already be fused_score-descending, as /search returns
+    them) against the original query and required_conditions.
+
+    Deliberately a separate endpoint from /search, called after the fact
+    by the frontend - never blocks or slows down the primary retrieval
+    response. Disabled by default (ENABLE_VERIFICATION=false); when
+    disabled this returns 404 rather than pretending to verify and
+    returning "verification_unavailable" for everything, so a client can
+    tell "feature off" apart from "feature on but every check failed".
+    """
+    if not config.ENABLE_VERIFICATION:
+        raise HTTPException(
+            status_code=404,
+            detail="Verification is disabled (ENABLE_VERIFICATION=false).",
+        )
+
+    required_conditions = request.required_conditions or _last_required_conditions.get(request.query, [])
+
+    results: list[VerificationResult] = []
+    for candidate_id in request.candidate_ids[: config.VERIFICATION_TOP_N]:
+        candidate = _recent_results.get(candidate_id)
+        if candidate is None:
+            results.append(VerificationResult(
+                candidate_id=candidate_id,
+                state="verification_unavailable",
+                reason="candidate_id not found in recent /search results (expired from cache or unknown id)",
+            ))
+            continue
+        results.append(verify_candidate(candidate, request.query, required_conditions))
+
+    return VerifyResponse(results=results)
+
+
 @app.get("/health")
-def health(response: Response) -> dict[str, str]:
+def health(response: Response) -> dict:
+    """`verification_enabled` lets the frontend decide whether to call
+    /verify at all - checking this first (rather than firing /verify
+    unconditionally and reacting to a 404) means the UI never shows even
+    a brief "verifying..." flash when the feature is off server-side."""
     if not _encoders_ready:
         response.status_code = 503
         return {"status": "loading"}
-    return {"status": "ok"}
+    return {"status": "ok", "verification_enabled": config.ENABLE_VERIFICATION}

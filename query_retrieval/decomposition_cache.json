@@ -1,0 +1,50 @@
+{
+  "a dog barking near a fence": {
+    "audio_query": "dog barking sounds",
+    "caption_query": "a dog barking near a fence",
+    "required_conditions": [
+      "a dog is barking",
+      "a fence is present",
+      "the dog is near the fence"
+    ],
+    "speech_query": "",
+    "visual_query": "dog near a fence",
+    "weights": {
+      "audio": 0.4,
+      "caption": 0.2,
+      "speech": 0.0,
+      "visual": 0.4
+    }
+  },
+  "a person in a red jacket near the door": {
+    "audio_query": "",
+    "caption_query": "a person in a red jacket near the door",
+    "required_conditions": [
+      "person is wearing a red jacket",
+      "a door is present"
+    ],
+    "speech_query": "",
+    "visual_query": "person wearing a red jacket near a door",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.25,
+      "speech": 0.0,
+      "visual": 0.75
+    }
+  },
+  "someone stole the milk from the fridge": {
+    "audio_query": "",
+    "caption_query": "someone stole the milk from the fridge; theft of milk from a refrigerator",
+    "required_conditions": [
+      "a person takes milk from a fridge"
+    ],
+    "speech_query": "",
+    "visual_query": "a person taking milk from a fridge; milk; refrigerator",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.55,
+      "speech": 0.0,
+      "visual": 0.45
+    }
+  }
+}

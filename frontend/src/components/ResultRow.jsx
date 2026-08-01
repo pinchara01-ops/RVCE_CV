@@ -27,7 +27,26 @@ function pseudoClipDuration(windowId, end) {
   return end + padding
 }
 
-export default function ResultRow({ result }) {
+// verification: undefined (feature off / not in top N) | 'pending' | VerificationResult
+function VerificationBadge({ verification }) {
+  if (!verification) return null
+
+  if (verification === 'pending') {
+    return <span className="verify-badge verify-badge--pending font-mono">verifying…</span>
+  }
+  if (verification.state === 'verified') {
+    const pct = Math.round((verification.confidence ?? 0) * 100)
+    return <span className="verify-badge verify-badge--verified font-mono">✓ verified {pct}%</span>
+  }
+  if (verification.state === 'rejected') {
+    return <span className="verify-badge verify-badge--rejected font-mono">✕ did not match</span>
+  }
+  // "verification_unavailable" - a failed/timed-out/disabled check, never
+  // shown as either a match or a rejection.
+  return <span className="verify-badge verify-badge--unavailable font-mono">verification unavailable</span>
+}
+
+export default function ResultRow({ result, verification }) {
   const { video_id, window_id, start, end, caption, transcript, score, matched_modalities } = result
   const clipDuration = pseudoClipDuration(window_id, end)
   const segmentLeft = (start / clipDuration) * 100
@@ -63,6 +82,7 @@ export default function ResultRow({ result }) {
               {m}
             </span>
           ))}
+          <VerificationBadge verification={verification} />
           <span className="result-row__score font-mono">{score.toFixed(4)}</span>
         </div>
       </div>
