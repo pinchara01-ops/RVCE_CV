@@ -15,6 +15,45 @@ class Settings:
     vlm_model: str = "Qwen/Qwen2.5-VL-7B-Instruct"
     vlm_timeout_seconds: float = 120
     vlm_retries: int = 2
+    vlm_selection_enabled: bool = True
+    vlm_visual_change_threshold: float = 0.12
+    vlm_audio_change_threshold: float = 0.15
+    vlm_speech_change_threshold: float = 0.18
+    vlm_change_weight_visual: float = 0.55
+    vlm_change_weight_audio: float = 0.25
+    vlm_change_weight_speech: float = 0.20
+    vlm_combined_change_threshold: float = 0.13
+    vlm_max_gap_windows: int = 3
+    vlm_max_selected_ratio: float = 0.60
+    vlm_context_neighbours: int = 1
+    vlm_min_direct_confidence: float = 0.50
+
+    def __post_init__(self):
+        thresholds = (
+            self.vlm_visual_change_threshold,
+            self.vlm_audio_change_threshold,
+            self.vlm_speech_change_threshold,
+            self.vlm_combined_change_threshold,
+        )
+        if any(not 0 <= value <= 2 for value in thresholds):
+            raise ValueError("VLM cosine-distance thresholds must be within 0..2")
+        weights = (
+            self.vlm_change_weight_visual,
+            self.vlm_change_weight_audio,
+            self.vlm_change_weight_speech,
+        )
+        if any(value < 0 for value in weights) or sum(weights) <= 0:
+            raise ValueError(
+                "VLM change weights must be non-negative with a positive sum"
+            )
+        if self.vlm_max_gap_windows < 1:
+            raise ValueError("VLM_MAX_GAP_WINDOWS must be at least one")
+        if not 0 <= self.vlm_max_selected_ratio <= 1:
+            raise ValueError("VLM_MAX_SELECTED_RATIO must be within 0..1")
+        if self.vlm_context_neighbours < 0:
+            raise ValueError("VLM_CONTEXT_NEIGHBOURS must be non-negative")
+        if not 0 <= self.vlm_min_direct_confidence <= 1:
+            raise ValueError("VLM_MIN_DIRECT_CONFIDENCE must be within 0..1")
 
     @classmethod
     def from_env(cls):
@@ -30,6 +69,33 @@ class Settings:
             vlm_model=os.getenv("VLM_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct"),
             vlm_timeout_seconds=float(os.getenv("VLM_TIMEOUT_SECONDS", "120")),
             vlm_retries=int(os.getenv("VLM_RETRIES", "2")),
+            vlm_selection_enabled=os.getenv("VLM_SELECTION_ENABLED", "true").lower()
+            in {"1", "true", "yes"},
+            vlm_visual_change_threshold=float(
+                os.getenv("VLM_VISUAL_CHANGE_THRESHOLD", "0.12")
+            ),
+            vlm_audio_change_threshold=float(
+                os.getenv("VLM_AUDIO_CHANGE_THRESHOLD", "0.15")
+            ),
+            vlm_speech_change_threshold=float(
+                os.getenv("VLM_SPEECH_CHANGE_THRESHOLD", "0.18")
+            ),
+            vlm_change_weight_visual=float(
+                os.getenv("VLM_CHANGE_WEIGHT_VISUAL", "0.55")
+            ),
+            vlm_change_weight_audio=float(os.getenv("VLM_CHANGE_WEIGHT_AUDIO", "0.25")),
+            vlm_change_weight_speech=float(
+                os.getenv("VLM_CHANGE_WEIGHT_SPEECH", "0.20")
+            ),
+            vlm_combined_change_threshold=float(
+                os.getenv("VLM_COMBINED_CHANGE_THRESHOLD", "0.13")
+            ),
+            vlm_max_gap_windows=int(os.getenv("VLM_MAX_GAP_WINDOWS", "3")),
+            vlm_max_selected_ratio=float(os.getenv("VLM_MAX_SELECTED_RATIO", "0.60")),
+            vlm_context_neighbours=int(os.getenv("VLM_CONTEXT_NEIGHBOURS", "1")),
+            vlm_min_direct_confidence=float(
+                os.getenv("VLM_MIN_DIRECT_CONFIDENCE", "0.50")
+            ),
         )
 
 

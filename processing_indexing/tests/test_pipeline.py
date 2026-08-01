@@ -26,7 +26,7 @@ class Text:
 
 class VLM:
     def describe(self, *args):
-        return VLMDescription(actions=["waves"])
+        return VLMDescription(actions=["waves"], scene_context="room", confidence=1)
 
 
 def test_pipeline_payload_resume_and_idempotency(tmp_path, monkeypatch):
@@ -53,7 +53,7 @@ def test_pipeline_payload_resume_and_idempotency(tmp_path, monkeypatch):
         and two.successfully_indexed_windows == 1
     )
     payload = next(iter(store.points.values()))[0]
-    assert set(payload.model_dump()) == {
+    assert {
         "video_id",
         "window_id",
         "start",
@@ -63,7 +63,7 @@ def test_pipeline_payload_resume_and_idempotency(tmp_path, monkeypatch):
         "has_audio",
         "vlm_processed",
         "source_path",
-    }
+    } <= set(payload.model_dump())
 
 
 def test_partial_failure_report(tmp_path, monkeypatch):

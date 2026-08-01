@@ -45,6 +45,7 @@ def test_real_in_memory_collection_schema_payload_and_idempotency():
         "caption": 1024,
     }
     assert records[0].payload == item()[0].model_dump()
+    assert set(records[0].vector) == {"visual", "audio", "speech", "caption"}
 
 
 @pytest.mark.parametrize(

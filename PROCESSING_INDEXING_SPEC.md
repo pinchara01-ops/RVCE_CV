@@ -4,7 +4,7 @@
 
 - Use one overlapping window scale: 10-second windows with a 5-second stride.
 - Transcribe the complete video once with timestamped Whisper output, then attach overlapping transcript segments to each window.
-- Process every window with X-CLIP, CLAP, and the Qwen VLM. Do not gate VLM calls using embedding-change thresholds.
+- Process every window with X-CLIP, CLAP, transcript mapping, and BGE-M3 speech encoding. Use the configurable multimodal selector to send key windows—not every window—to Qwen.
 - Embed transcript text and VLM captions separately with BGE-M3.
 - Keep all four vectors separate; never concatenate or average them.
 - Upsert one deterministic Qdrant point per window so reprocessing the same video is idempotent.
@@ -20,7 +20,7 @@
    - X-CLIP visual vector (512 dimensions).
    - CLAP audio vector (512 dimensions); define and test silent-window handling.
    - Overlapping Whisper transcript and BGE-M3 speech vector (1024 dimensions).
-   - Detailed structured Qwen caption and BGE-M3 caption vector (1024 dimensions).
+   - Selected windows receive a detailed structured Qwen caption. Skipped windows receive only bounded provenance-marked context when safe; unavailable captions use an explicit non-evidentiary sentinel embedding. Every point retains a BGE-M3 caption vector (1024 dimensions).
 6. Validate dimensions, finite values, timestamps, IDs, and payload fields.
 7. Create/validate the Qdrant collection and batch-upsert points.
 8. Return machine-readable progress, counts, failures, and elapsed time.
@@ -77,6 +77,7 @@ The query branch currently requires all fields except `source_path`; `source_pat
 - Window boundaries are correct for short, exact-length, fractional, and final partial windows.
 - Transcript segments are mapped by timestamp, not duplicated blindly.
 - Every successful point has exactly four correctly sized finite vectors.
+- Direct, inherited, and unavailable captions remain distinguishable in payload metadata; skipped windows never claim direct VLM processing.
 - A silent video indexes successfully without fabricated audio evidence.
 - Reprocessing does not duplicate points.
 - Interrupted batch processing can resume safely.

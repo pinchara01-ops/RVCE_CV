@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Protocol, Callable
 from .models import VideoWindow, VLMDescription
 
-PROMPT = """Describe only visible evidence in this video window. Never infer sounds. Return strict JSON with keys people_and_clothing, objects_and_colours, actions, object_action_relationships, spatial_relationships, visible_text, scene_context, action_timing (action/start_seconds/end_seconds), and uncertainty."""
+PROMPT = """Describe only visible evidence in this video window. Never infer sounds. Return strict JSON with keys people_and_clothing, objects_and_colours, actions, object_action_relationships, spatial_relationships, visible_text, scene_context, action_timing (action/start_seconds/end_seconds), uncertainty, and confidence (0 to 1 based only on visible evidence)."""
 
 
 class VLMError(RuntimeError):

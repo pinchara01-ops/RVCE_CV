@@ -73,6 +73,16 @@ class WindowPayload(BaseModel):
     has_audio: bool
     vlm_processed: bool
     source_path: str
+    caption_direct: bool = False
+    caption_inherited: bool = False
+    caption_available: bool = False
+    caption_source_window_id: str | None = None
+    caption_source_distance: int = 0
+    caption_confidence: float = Field(default=0.0, ge=0, le=1)
+    selection_reasons: list[str] = []
+    change_scores: dict[str, float] = {}
+    change_from_previous: dict[str, float | None] = {}
+    change_from_last_vlm: dict[str, float | None] = {}
 
 
 class ActionTiming(BaseModel):
@@ -91,6 +101,7 @@ class VLMDescription(BaseModel):
     scene_context: str = ""
     action_timing: list[ActionTiming] = []
     uncertainty: list[str] = []
+    confidence: float = Field(default=0.0, ge=0, le=1)
 
     def caption(self):
         groups = [
@@ -108,6 +119,19 @@ class VLMDescription(BaseModel):
             f"{x.action} from {x.start_seconds:g}s to {x.end_seconds:g}s"
             for x in self.action_timing
         ]
+        parts += [f"Uncertain: {x.strip()}" for x in self.uncertainty if x.strip()]
+        return ". ".join(parts)
+
+    def context_caption(self):
+        groups = [
+            self.people_and_clothing,
+            self.objects_and_colours,
+            self.spatial_relationships,
+            self.visible_text,
+        ]
+        parts = [x.strip() for group in groups for x in group if x.strip()]
+        if self.scene_context.strip():
+            parts.append(self.scene_context.strip())
         parts += [f"Uncertain: {x.strip()}" for x in self.uncertainty if x.strip()]
         return ". ".join(parts)
 
@@ -129,3 +153,15 @@ class ProcessingReport(BaseModel):
     elapsed_seconds: float
     errors: dict[str, str] = {}
     status: RunStatus
+    selected_vlm_windows: int = 0
+    successful_vlm_windows: int = 0
+    failed_vlm_windows: int = 0
+    skipped_vlm_windows: int = 0
+    direct_caption_windows: int = 0
+    inherited_caption_windows: int = 0
+    unavailable_caption_windows: int = 0
+    selected_ratio: float = 0.0
+    estimated_calls_saved: int = 0
+    selection_count_by_reason: dict[str, int] = {}
+    average_change: dict[str, float] = {}
+    selection_config: dict[str, float | int | bool] = {}
