@@ -56,7 +56,12 @@ def _fake_encode_query(vector_dim_map):
 
 
 def test_near_identical_pair_ranks_top_and_hard_negative_ranks_last():
-    hits = search_visual(ANCHOR_VECTORS["visual"], top_k=20)
+    # top_k must cover the whole collection, not just "a generous-looking
+    # number" - a top_k smaller than the total point count can silently
+    # exclude the true hard negative from the returned (and thus "last")
+    # ranking as the seed data grows (bug found live when seed_dummy_data
+    # grew from 14 to 33 points: top_k=20 cut off the hard negative).
+    hits = search_visual(ANCHOR_VECTORS["visual"], top_k=1000)
     assert len(hits) > 0
 
     ranked_ids = [h["window_id"] for h in hits]
@@ -119,17 +124,6 @@ def test_top_k_very_large_does_not_crash(api_client, monkeypatch):
     # only a handful of dummy points exist; must return what's available, not 10000, not error
     assert 0 <= len(body["results"]) < 100
 
-
-def test_invalid_anthropic_key_falls_back_and_search_still_works(api_client, monkeypatch):
-    dims = {m: config.VECTOR_CONFIG[m]["dim"] for m in config.VECTOR_NAMES}
-    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "not-a-real-key-12345")
-    monkeypatch.setattr(api, "encoders", type("E", (), {"encode_query": staticmethod(_fake_encode_query(dims))})())
-
-    resp = api_client.post("/search", json={"query": "man shouting in a blue shirt", "top_k": 5})
-
-    assert resp.status_code == 200
-    weights = resp.json()["query_weights"]
-    assert abs(sum(weights.values()) - 1.0) < 1e-9
 
 
 def test_zero_matches_returns_empty_results_cleanly(api_client, monkeypatch):

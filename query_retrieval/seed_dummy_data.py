@@ -1,9 +1,13 @@
-"""Insert realistic fake points into Qdrant for standalone Phase 1 testing.
+"""Insert realistic fake points into Qdrant for standalone testing.
 
 Covers: visual-only windows, audio-only windows, overlapping-in-time
-windows across two videos representing the same event across modalities,
-fully disjoint windows, a deliberately near-identical "true match" pair,
-and a deliberate hard negative. Run directly:
+windows across modalities representing the same event, fully disjoint
+windows, a deliberately near-identical "true match" pair, a deliberate
+hard negative, a short (2-window) video, a long video mixing tightly
+clustered and far-apart windows, a video with all 4 modalities on every
+window, two different videos with near-identical content at the same
+timestamps (must never merge across video_id), and edge-case timestamps
+(zero-duration window, very large start/end). Run directly:
 `python -m query_retrieval.seed_dummy_data`.
 """
 import logging
@@ -27,18 +31,38 @@ ANCHOR_VECTORS: dict[str, list[float]] = {
     name: [_anchor_rng.uniform(-1, 1) for _ in range(dim)] for name, dim in _DIMS.items()
 }
 
+# Separate anchor for the cross-video-duplicate scenario - must NOT reuse
+# ANCHOR_VECTORS, or video_dup_a/b would compete in ranking with video_e's
+# near-match pair for any query aimed at ANCHOR_VECTORS (bug found live:
+# broke test_near_identical_pair_ranks_top_and_hard_negative_ranks_last).
+_dup_anchor_rng = random.Random(20260802)
+_DUP_ANCHOR_VECTORS: dict[str, list[float]] = {
+    name: [_dup_anchor_rng.uniform(-1, 1) for _ in range(dim)] for name, dim in _DIMS.items()
+}
+
 NEAR_MATCH_WINDOW_IDS = ("video_e_window_0000", "video_e_window_0001")
 HARD_NEGATIVE_WINDOW_ID = "video_f_window_0000"
+
+# Additional scenario IDs, exported for tests/test_comprehensive.py.
+SHORT_VIDEO_ID = "video_short"
+LONG_VIDEO_ID = "video_long"
+FULL_MODALITY_VIDEO_ID = "video_full"
+DUP_VIDEO_IDS = ("video_dup_a", "video_dup_b")
+DUP_WINDOW_IDS = ("video_dup_a_window_0000", "video_dup_b_window_0000")
+EDGE_CASE_VIDEO_ID = "video_edge"
+ZERO_DURATION_WINDOW_ID = "video_edge_window_0000"
+LARGE_TIMESTAMP_WINDOW_ID = "video_edge_window_0001"
 
 
 def _vec(dim: int) -> list[float]:
     return [random.uniform(-1, 1) for _ in range(dim)]
 
 
-def _near_identical_vec(modality: str, noise: float = 0.01) -> list[float]:
+def _near_identical_vec(modality: str, noise: float = 0.01, anchor: dict | None = None) -> list[float]:
     """Anchor vector plus tiny jitter - simulates a true match, not exact
     duplicate (real embeddings of the same content are never bit-identical)."""
-    return [x + random.uniform(-noise, noise) for x in ANCHOR_VECTORS[modality]]
+    source = (anchor or ANCHOR_VECTORS)[modality]
+    return [x + random.uniform(-noise, noise) for x in source]
 
 
 def _far_vec(modality: str) -> list[float]:
@@ -162,6 +186,89 @@ def build_points() -> list[PointStruct]:
             transcript="completely unrelated content",
             caption="completely unrelated content",
             has_audio=True,
+            vlm_processed=True,
+        )
+    )
+
+    # video_short: a short video, just 2 close windows (should merge).
+    for i, start in enumerate((0.0, 3.0)):
+        points.append(
+            _point(
+                SHORT_VIDEO_ID, i, start, start + 3.0,
+                vectors={"visual": _vec(dims["visual"]), "caption": _vec(dims["caption"])},
+                caption=f"Short clip segment {i}",
+                vlm_processed=True,
+            )
+        )
+
+    # video_long: many windows - some tightly clustered (should merge into
+    # one region), some far apart (should stay separate), in one long video.
+    long_starts = [0.0, 2.0, 4.0, 6.0,       # cluster 1: contiguous, gap 0
+                   50.0, 52.0, 54.0,          # cluster 2: contiguous, gap 0
+                   120.0,                      # isolated window
+                   200.0, 203.0]                # cluster 3: gap 1s, well under MERGE_GAP_SECONDS
+    for i, start in enumerate(long_starts):
+        points.append(
+            _point(
+                LONG_VIDEO_ID, i, start, start + 2.0,
+                vectors={"visual": _vec(dims["visual"]), "caption": _vec(dims["caption"])},
+                caption=f"Long video segment {i}",
+                vlm_processed=True,
+            )
+        )
+
+    # video_full: every window carries all 4 modalities (not just one window
+    # like video_c) - exercises full-modality fusion/merge across a chain.
+    for i in range(3):
+        start = i * 4.0
+        points.append(
+            _point(
+                FULL_MODALITY_VIDEO_ID, i, start, start + 4.0,
+                vectors={
+                    "visual": _vec(dims["visual"]),
+                    "audio": _vec(dims["audio"]),
+                    "speech": _vec(dims["speech"]),
+                    "caption": _vec(dims["caption"]),
+                },
+                transcript=f"Narrator describes scene {i}",
+                caption=f"A fully-annotated scene {i}",
+                has_audio=True,
+                vlm_processed=True,
+            )
+        )
+
+    # video_dup_a / video_dup_b: two DIFFERENT videos, same timestamps,
+    # near-identical visual content - must never merge across video_id,
+    # exercised through the real Qdrant + merge pipeline (not just the
+    # synthetic unit test in test_merge_windows.py).
+    for video_id in DUP_VIDEO_IDS:
+        points.append(
+            _point(
+                video_id, 0, 0.0, 5.0,
+                vectors={
+                    "visual": _near_identical_vec("visual", anchor=_DUP_ANCHOR_VECTORS),
+                    "caption": _vec(dims["caption"]),
+                },
+                caption="a blue car parked outside",
+                vlm_processed=True,
+            )
+        )
+
+    # video_edge: edge-case timestamps - zero-duration window, and a window
+    # far out at large start/end values.
+    points.append(
+        _point(
+            EDGE_CASE_VIDEO_ID, 0, 50.0, 50.0,  # zero duration
+            vectors={"visual": _vec(dims["visual"]), "caption": _vec(dims["caption"])},
+            caption="Zero-duration edge case window",
+            vlm_processed=True,
+        )
+    )
+    points.append(
+        _point(
+            EDGE_CASE_VIDEO_ID, 1, 99999.0, 100005.0,  # very large timestamps
+            vectors={"visual": _vec(dims["visual"]), "caption": _vec(dims["caption"])},
+            caption="Very large timestamp edge case window",
             vlm_processed=True,
         )
     )

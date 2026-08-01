@@ -1,5 +1,14 @@
 """Central config. All values env-overridable."""
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Loaded from query_retrieval/.env regardless of the process's cwd (e.g.
+# uvicorn launched from the repo root). Real environment variables set
+# externally still take precedence - load_dotenv doesn't override existing
+# os.environ entries by default.
+load_dotenv(Path(__file__).parent / ".env")
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -33,7 +42,6 @@ VECTOR_NAMES: list[str] = list(VECTOR_CONFIG.keys())
 
 # Feature flags — when off, corresponding field/vector may be absent from
 # payload/points. All downstream code must tolerate missing fields.
-ENABLE_VLM: bool = _bool("ENABLE_VLM", True)
 ENABLE_OCR: bool = _bool("ENABLE_OCR", True)
 ENABLE_OBJECTS: bool = _bool("ENABLE_OBJECTS", True)
 
@@ -42,11 +50,6 @@ RRF_K: int = _int("RRF_K", 60)
 
 # Default search depth per modality
 DEFAULT_TOP_K: int = _int("DEFAULT_TOP_K", 15)
-
-# --- Query router (Phase 2) ---
-ANTHROPIC_API_KEY: str | None = os.getenv("ANTHROPIC_API_KEY")
-ROUTER_MODEL: str = os.getenv("ROUTER_MODEL", "claude-sonnet-4-6")
-ROUTER_TIMEOUT_SECONDS: float = float(os.getenv("ROUTER_TIMEOUT_SECONDS", "3"))
 
 # Modalities below this weight are zeroed out and skipped in retrieval.
 MIN_MODALITY_WEIGHT: float = float(os.getenv("MIN_MODALITY_WEIGHT", "0.05"))
