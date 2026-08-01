@@ -130,10 +130,12 @@ def perf_api_client(monkeypatch):
     # api.py holds a reference to this same module object, and startup's
     # encoders.warmup() call must still resolve to something callable.
     monkeypatch.setattr(encoders, "warmup", lambda: None)
-    monkeypatch.setattr(encoders, "encode_query", lambda q, w: {"visual": [0.0] * dim})
-    # Force visual-only routing - the point of this test is Qdrant + fusion +
-    # merge at scale, not router/encoder behavior.
-    monkeypatch.setattr(api, "classify_query", lambda q: {"visual": 1.0, "audio": 0.0, "speech": 0.0, "caption": 0.0})
+    # Only "visual" key returned - the perf collection only has visual
+    # vectors, so audio/speech/caption searches against it would just be
+    # empty lists anyway; keeping this single-modality mock is enough to
+    # exercise Qdrant + fusion + merge at scale (the "all 4 always
+    # searched" behavior itself is covered in test_encoders.py).
+    monkeypatch.setattr(encoders, "encode_query", lambda q: {"visual": [0.0] * dim})
     # Widen per-modality search depth so /search actually sees the full 200-point
     # candidate pool instead of the production default (15) - otherwise this
     # test would only ever exercise merge_windows() on ~15 hits regardless of

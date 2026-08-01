@@ -2,11 +2,14 @@
 variety, and system-level behavior (cold start, concurrency, malformed
 requests, empty collection).
 
-Real Qdrant, real router (rule-based only, V1 architecture). Encoders are
-mocked (zero vectors) to stay fast/network-free - these tests are about
-routing, retrieval plumbing, and merge correctness at realistic data
-scale, not embedding quality.
+Real Qdrant, no query router (architecture change: all 4 modalities are
+always encoded and searched, RRF suppresses irrelevant ones through rank).
+Encoders are mocked to stay fast/network-free - these tests are about
+retrieval plumbing and merge correctness at realistic data scale, not
+embedding quality.
 """
+import hashlib
+import random
 import threading
 
 import pytest
@@ -36,9 +39,15 @@ def seeded_collection():
     client.delete_collection(config.COLLECTION_NAME)
 
 
-def _fake_encode_query(query, weights):
+def _fake_encode_query(query: str) -> dict[str, list[float]]:
+    """Deterministic per-query fake vectors (not all-zero): same query text
+    always produces the same vectors, different query text produces
+    different vectors. This lets concurrency tests detect real
+    cross-request contamination instead of every query looking identical."""
     dims = {m: config.VECTOR_CONFIG[m]["dim"] for m in config.VECTOR_NAMES}
-    return {m: [0.0] * dims[m] for m, w in weights.items() if w > 0}
+    seed_val = int(hashlib.sha256(query.encode()).hexdigest(), 16) % (2**32)
+    rng = random.Random(seed_val)
+    return {m: [rng.uniform(-1, 1) for _ in range(dims[m])] for m in dims}
 
 
 @pytest.fixture
@@ -59,7 +68,7 @@ def _search(client, query, top_k=10):
 def _fetch_video_hits(video_id: str) -> list[FusedHit]:
     """Fetch all real seeded points for a video_id and wrap them as
     FusedHits, so merge_windows() can be exercised against real seed data
-    (not hand-typed synthetic data) without needing the full router/encoder
+    (not hand-typed synthetic data) without needing the full encoder
     pipeline."""
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
@@ -83,48 +92,26 @@ def _fetch_video_hits(video_id: str) -> list[FusedHit]:
 
 # ============================================================
 # 1. QUERY VARIETY - via real /search calls
+#
+# No router means there's no per-query modality-weight direction to assert
+# anymore (every query always searches all 4 modalities identically) - these
+# tests instead confirm the full always-search-everything pipeline handles
+# each query shape safely and returns a valid response.
 # ============================================================
 
 
-@pytest.mark.parametrize("query", ["red car", "person wearing glasses"])
-def test_pure_visual_query(client, query):
+@pytest.mark.parametrize("query", [
+    "red car", "person wearing glasses",             # visual-flavored
+    "dog barking", "glass breaking",                  # audio-flavored
+    "someone says hello", "person mentions their name",  # speech-flavored
+    "a celebration", "an outdoor scene",              # caption/semantic-flavored
+    "man shouting while driving",                     # mixed
+    "asdkjfh qwoeiru zxcvbn qqqqq",                   # gibberish
+    "dog",                                            # single word
+])
+def test_query_variety_does_not_crash(client, query):
     body = _search(client, query)
-    weights = body["query_weights"]
-    assert weights["visual"] == max(weights.values())
     assert isinstance(body["results"], list)
-
-
-@pytest.mark.parametrize("query", ["dog barking", "glass breaking"])
-def test_pure_audio_query(client, query):
-    body = _search(client, query)
-    weights = body["query_weights"]
-    assert weights["audio"] == max(weights.values())
-
-
-@pytest.mark.parametrize("query", ["someone says hello", "person mentions their name"])
-def test_pure_speech_query(client, query):
-    body = _search(client, query)
-    weights = body["query_weights"]
-    assert weights["speech"] == max(weights.values())
-
-
-@pytest.mark.parametrize("query", ["a celebration", "an outdoor scene"])
-def test_pure_caption_semantic_query(client, query):
-    body = _search(client, query)
-    weights = body["query_weights"]
-    assert weights["caption"] == 1.0  # no keyword hits -> default catch-all
-
-
-def test_mixed_ambiguous_query(client):
-    body = _search(client, "man shouting while driving")
-    weights = body["query_weights"]
-    assert abs(sum(weights.values()) - 1.0) < 1e-9
-    assert weights["speech"] > 0  # "shouting" is a speech keyword
-
-
-def test_nonsense_gibberish_query_degrades_to_caption(client):
-    body = _search(client, "asdkjfh qwoeiru zxcvbn qqqqq")
-    assert body["query_weights"]["caption"] == 1.0
 
 
 def test_very_long_paragraph_query_does_not_crash(client):
@@ -134,12 +121,6 @@ def test_very_long_paragraph_query_does_not_crash(client):
     ) * 20  # ~280 words
     body = _search(client, paragraph)
     assert isinstance(body["results"], list)
-    assert abs(sum(body["query_weights"].values()) - 1.0) < 1e-9
-
-
-def test_single_word_query(client):
-    body = _search(client, "dog")
-    assert abs(sum(body["query_weights"].values()) - 1.0) < 1e-9
 
 
 @pytest.mark.parametrize("query", [
@@ -151,12 +132,11 @@ def test_single_word_query(client):
 def test_special_characters_emoji_non_english_do_not_crash(client, query):
     body = _search(client, query)
     assert isinstance(body["results"], list)
-    assert abs(sum(body["query_weights"].values()) - 1.0) < 1e-9
 
 
-def test_empty_string_query_reconfirmed(client):
+def test_empty_string_query_does_not_crash(client):
     body = _search(client, "")
-    assert body["query_weights"] == {"visual": 0.0, "audio": 0.0, "speech": 0.0, "caption": 1.0}
+    assert isinstance(body["results"], list)
 
 
 # ============================================================
@@ -253,11 +233,14 @@ def test_rapid_sequential_queries_no_crash(client):
     for q in queries:
         body = _search(client, q)
         assert isinstance(body["results"], list)
-        assert abs(sum(body["query_weights"].values()) - 1.0) < 1e-9
 
 
 def test_concurrent_requests_no_crash_no_cross_contamination(client):
     queries = ["red car", "dog barking", "someone says hello", "a celebration", "man shouting"]
+
+    # Run each query once, sequentially, to get its expected result signature.
+    expected = {q: _search(client, q, top_k=5)["results"] for q in queries}
+
     results: dict[int, dict] = {}
     errors: list[Exception] = []
 
@@ -275,12 +258,12 @@ def test_concurrent_requests_no_crash_no_cross_contamination(client):
 
     assert not errors, f"concurrent requests raised: {errors}"
     assert len(results) == len(queries)
-    # each response's weights should reflect its own query, not a neighbor's -
-    # visual-dominant vs audio-dominant vs speech-dominant vs caption-default
-    assert results[0]["query_weights"]["visual"] == max(results[0]["query_weights"].values())
-    assert results[1]["query_weights"]["audio"] == max(results[1]["query_weights"].values())
-    assert results[2]["query_weights"]["speech"] == max(results[2]["query_weights"].values())
-    assert results[3]["query_weights"]["caption"] == 1.0
+    # Each thread's concurrent result must match that same query's known
+    # sequential result exactly - if a different thread's query vector or
+    # result set leaked in, this would catch it (encoders are deterministic
+    # per-query-text, so a mismatch can only mean cross-request contamination).
+    for i, q in enumerate(queries):
+        assert results[i]["results"] == expected[q], f"query {q!r} result mismatch under concurrency"
 
 
 def test_malformed_request_missing_query_field(client):

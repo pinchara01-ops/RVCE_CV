@@ -1,6 +1,9 @@
-"""Integration checks across Phases 1-4: real Qdrant, real router fallback,
-mocked encoders (to stay fast/network-free), exercised through the actual
-/search endpoint - not just individual unit functions.
+"""Integration checks: real Qdrant, real encoders wiring (mocked at the
+model-loader boundary to stay fast/network-free), exercised through the
+actual /search endpoint - not just individual unit functions.
+
+No query router (architecture change): all 4 modalities are always
+encoded and searched.
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -44,10 +47,10 @@ def api_client(monkeypatch):
 
 def _fake_encode_query(vector_dim_map):
     """Build a fake encoders.encode_query that returns a zero vector for
-    every modality with nonzero weight, without touching real models."""
+    all 4 modalities, without touching real models."""
 
-    def _fake(query: str, weights: dict[str, float]) -> dict[str, list[float]]:
-        return {m: [0.0] * vector_dim_map[m] for m, w in weights.items() if w > 0}
+    def _fake(query: str) -> dict[str, list[float]]:
+        return {m: [0.0] * dim for m, dim in vector_dim_map.items()}
 
     return _fake
 
@@ -80,10 +83,8 @@ def test_near_identical_pair_ranks_top_and_hard_negative_ranks_last():
 def test_qdrant_unreachable_returns_clean_response_not_500(api_client, monkeypatch):
     broken_client = RealQdrantClient(host="localhost", port=1, timeout=2)
     monkeypatch.setattr(qdrant_client_module, "_client", broken_client)
-    monkeypatch.setattr(
-        api, "encoders",
-        type("E", (), {"encode_query": staticmethod(_fake_encode_query({"visual": 512}))})(),
-    )
+    dims = {m: config.VECTOR_CONFIG[m]["dim"] for m in config.VECTOR_NAMES}
+    monkeypatch.setattr(api, "encoders", type("E", (), {"encode_query": staticmethod(_fake_encode_query(dims))})())
 
     resp = api_client.post("/search", json={"query": "person in a red jacket", "top_k": 5})
 
@@ -91,16 +92,14 @@ def test_qdrant_unreachable_returns_clean_response_not_500(api_client, monkeypat
     assert resp.json()["results"] == []
 
 
-def test_empty_query_string_falls_back_to_caption_and_does_not_crash(api_client, monkeypatch):
+def test_empty_query_string_does_not_crash(api_client, monkeypatch):
     dims = {m: config.VECTOR_CONFIG[m]["dim"] for m in config.VECTOR_NAMES}
     monkeypatch.setattr(api, "encoders", type("E", (), {"encode_query": staticmethod(_fake_encode_query(dims))})())
 
     resp = api_client.post("/search", json={"query": "", "top_k": 5})
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["query_weights"] == {"visual": 0.0, "audio": 0.0, "speech": 0.0, "caption": 1.0}
-    assert isinstance(body["results"], list)
+    assert isinstance(resp.json()["results"], list)
 
 
 def test_top_k_zero_returns_empty_results_not_an_error(api_client, monkeypatch):
@@ -123,7 +122,6 @@ def test_top_k_very_large_does_not_crash(api_client, monkeypatch):
     body = resp.json()
     # only a handful of dummy points exist; must return what's available, not 10000, not error
     assert 0 <= len(body["results"]) < 100
-
 
 
 def test_zero_matches_returns_empty_results_cleanly(api_client, monkeypatch):

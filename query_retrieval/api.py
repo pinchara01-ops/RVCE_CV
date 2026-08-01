@@ -1,6 +1,5 @@
 """External API contract (FastAPI). Wired to real Qdrant search functions,
-the query router (Phase 2), real query encoders (Phase 3), weighted RRF
-fusion (Phase 4), and window merging (Phase 5).
+real query encoders, unweighted RRF fusion, and window merging.
 """
 import logging
 
@@ -9,7 +8,7 @@ from fastapi import FastAPI, Response
 logging.basicConfig(level=logging.INFO)
 
 from query_retrieval import config, encoders
-from query_retrieval.fusion import weighted_rrf
+from query_retrieval.fusion import rrf_fuse
 from query_retrieval.merge_windows import merge_windows
 from query_retrieval.models import SearchRequest, SearchResponse, SearchResultItem
 from query_retrieval.qdrant_client import (
@@ -18,7 +17,6 @@ from query_retrieval.qdrant_client import (
     search_speech,
     search_visual,
 )
-from query_retrieval.router import classify_query
 
 logger = logging.getLogger(__name__)
 
@@ -49,19 +47,19 @@ def _load_encoders() -> None:
 
 @app.post("/search", response_model=SearchResponse)
 def search(request: SearchRequest) -> SearchResponse:
-    """Search across all modalities, fuse, and merge into a ranked list of
-    candidate regions.
+    """Encode the query for all 4 modalities, search all 4 in parallel,
+    fuse via unweighted RRF, and merge into a ranked list of candidate
+    regions.
 
-    Modality weights come from the query router (Phase 2); query vectors
-    come from the real encoders (Phase 3); ranked lists are combined via
-    weighted RRF (Phase 4); overlapping/adjacent same-video hits are then
-    merged into single regions (Phase 5). Per-modality search depth is
-    config.DEFAULT_TOP_K (a fixed candidate pool) - fusion is left
-    untruncated so merging sees every candidate before anything is dropped;
-    request.top_k is applied last, to the final merged regions.
+    No query routing: all 4 modalities are always encoded and searched -
+    RRF's rank-based fusion naturally suppresses modalities irrelevant to
+    a given query rather than an upstream router deciding in advance which
+    to search. Per-modality search depth is config.DEFAULT_TOP_K (a fixed
+    candidate pool) - fusion is left untruncated so merging sees every
+    candidate before anything is dropped; request.top_k is applied last,
+    to the final merged regions.
     """
-    query_weights = classify_query(request.query)
-    query_vectors = encoders.encode_query(request.query, query_weights)
+    query_vectors = encoders.encode_query(request.query)
 
     modality_hits = {
         modality: fn(query_vectors[modality], top_k=config.DEFAULT_TOP_K)
@@ -69,7 +67,7 @@ def search(request: SearchRequest) -> SearchResponse:
         if modality in query_vectors
     }
 
-    fused = weighted_rrf(modality_hits, query_weights)
+    fused = rrf_fuse(modality_hits)
     regions = merge_windows(fused)[: request.top_k]
 
     results = [
@@ -85,7 +83,7 @@ def search(request: SearchRequest) -> SearchResponse:
         )
         for region in regions
     ]
-    return SearchResponse(results=results, query_weights=query_weights)
+    return SearchResponse(results=results)
 
 
 @app.get("/health")
