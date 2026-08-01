@@ -102,6 +102,36 @@ def test_payload_carried_from_first_seen_modality():
     assert fused[0].payload.video_id == "video_visual"  # visual iterated first (dict order)
 
 
+def test_modality_evidence_populated_with_correct_rank_and_contribution():
+    results = {
+        "visual": [_hit("w1"), _hit("other_v")],
+        "audio": [_hit("other_a"), _hit("w1")],  # w1 at rank 2 here
+    }
+    fused = rrf_fuse(results, k=K)
+    w1 = next(h for h in fused if h.window_id == "w1")
+
+    by_modality = {e.modality: e for e in w1.modality_evidence}
+    assert set(by_modality) == {"visual", "audio"}
+    assert by_modality["visual"].rank == 1
+    assert by_modality["visual"].contribution == 1.0 / (K + 1)
+    assert by_modality["audio"].rank == 2
+    assert by_modality["audio"].contribution == 1.0 / (K + 2)
+
+
+def test_modality_evidence_contributions_sum_to_fused_score():
+    results = {
+        "visual": [_hit("w1"), _hit("other_v"), _hit("w2")],
+        "audio": [_hit("w2"), _hit("w1")],
+        "speech": [_hit("filler"), _hit("filler2"), _hit("w1")],
+    }
+    fused = rrf_fuse(results, k=K)
+
+    for hit in fused:
+        summed = sum(e.contribution for e in hit.modality_evidence)
+        assert abs(summed - hit.fused_score) < 1e-12
+        assert sorted(e.modality for e in hit.modality_evidence) == sorted(hit.matched_modalities)
+
+
 def test_uses_config_rrf_k_as_default():
     from query_retrieval import config
     import inspect

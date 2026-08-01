@@ -6,6 +6,28 @@
   padding: 40px 20px 60px;
 }
 
+.mock-mode-banner {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #fff3cd;
+  border: 1px solid #e0a800;
+  color: #7a5c00;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.error-banner {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #fdecea;
+  border: 1px solid #c0392b;
+  color: #7a2418;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
 .results-status {
   display: flex;
   gap: 18px;

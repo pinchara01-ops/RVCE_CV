@@ -11,7 +11,7 @@ rank position already reflects it.
 import logging
 
 from query_retrieval import config
-from query_retrieval.models import FusedHit, WindowPayload
+from query_retrieval.models import FusedHit, ModalityEvidence, WindowPayload
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ def rrf_fuse(
     scores: dict[str, float] = {}
     payloads: dict[str, WindowPayload] = {}
     matched: dict[str, list[str]] = {}
+    evidence: dict[str, list[ModalityEvidence]] = {}
 
     for modality, hits in results.items():
         if not hits:
@@ -51,12 +52,15 @@ def rrf_fuse(
 
             contribution = 1.0 / (k + rank)
             scores[window_id] = scores.get(window_id, 0.0) + contribution
+            entry = ModalityEvidence(modality=modality, rank=rank, contribution=contribution)
 
             if window_id not in payloads:
                 payloads[window_id] = WindowPayload(**(hit.get("payload") or {}))
                 matched[window_id] = [modality]
+                evidence[window_id] = [entry]
             else:
                 matched[window_id].append(modality)
+                evidence[window_id].append(entry)
 
     fused = [
         FusedHit(
@@ -64,6 +68,7 @@ def rrf_fuse(
             fused_score=scores[window_id],
             payload=payloads[window_id],
             matched_modalities=matched[window_id],
+            modality_evidence=evidence[window_id],
         )
         for window_id in scores
     ]

@@ -11,7 +11,9 @@ speech and caption both use BGE-M3 - this is intentional per contract
 one model instance, two thin wrapper functions.
 """
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from query_retrieval import config
@@ -20,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 # name -> loaded (model, tokenizer) or (model, None) for sentence-transformers
 _model_cache: dict[str, tuple] = {}
+
+# speech and caption share one BGE-M3 instance (see module docstring) - two
+# threads calling .encode() on the same SentenceTransformer concurrently
+# isn't documented as thread-safe, so serialize just that shared model.
+# X-CLIP and CLAP each have their own instance and don't need this.
+_bge_m3_lock = threading.Lock()
+
+# Reused across requests rather than a per-call `with ThreadPoolExecutor()`
+# to avoid paying thread-spawn cost on every query.
+_encode_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="encode")
 
 
 def _load_xclip():
@@ -98,13 +110,15 @@ def encode_audio_text(query: str) -> list[float]:
 def encode_speech_text(query: str) -> list[float]:
     """BGE-M3 dense encoder, 1024-dim. Shared model with encode_caption_text."""
     model, _ = _get("bge_m3", _load_bge_m3)
-    return model.encode(query, normalize_embeddings=True).tolist()
+    with _bge_m3_lock:
+        return model.encode(query, normalize_embeddings=True).tolist()
 
 
 def encode_caption_text(query: str) -> list[float]:
     """BGE-M3 dense encoder, 1024-dim. Shared model with encode_speech_text."""
     model, _ = _get("bge_m3", _load_bge_m3)
-    return model.encode(query, normalize_embeddings=True).tolist()
+    with _bge_m3_lock:
+        return model.encode(query, normalize_embeddings=True).tolist()
 
 
 _ENCODERS: dict[str, Callable[[str], list[float]]] = {
@@ -126,20 +140,39 @@ def warmup() -> None:
     logger.info("Query encoders warmup complete")
 
 
+def _safe_encode(modality: str, encode_fn: Callable[[str], list[float]], query: str) -> list[float] | None:
+    try:
+        return encode_fn(query)
+    except Exception as exc:  # noqa: BLE001 - one modality failing must not fail the request
+        logger.warning("Encoding failed for modality '%s': %s", modality, exc)
+        return None
+
+
 def encode_query(query: str) -> dict[str, list[float]]:
-    """Encode `query` for all 4 modalities.
+    """Encode `query` for all 4 modalities, concurrently.
 
     Always encodes every modality (architecture change: query routing was
     removed - Weighted RRF suppresses irrelevant modalities through rank,
-    so gating encoding on a router's per-query weights isn't needed).
+    so gating encoding on a router's per-query weights isn't needed). The 4
+    encoder calls run in a thread pool rather than sequentially - each is a
+    separate model forward pass (X-CLIP, CLAP, BGE-M3 x2) with no shared
+    mutable state between them (see _bge_m3_lock for the one exception),
+    so running them concurrently is safe and turns ~4 sequential model
+    calls into roughly the cost of the slowest one.
+
     If encoding a modality fails mid-query (e.g. OOM), that modality is
     logged and dropped from the result - callers proceed with whatever
-    modalities succeeded rather than failing the whole request.
+    modalities succeeded rather than failing the whole request. If every
+    modality fails, an empty dict is returned and the caller (api.py)
+    treats that as a hard failure, not a silent empty search.
     """
+    futures = {
+        _encode_executor.submit(_safe_encode, modality, encode_fn, query): modality
+        for modality, encode_fn in _ENCODERS.items()
+    }
     vectors: dict[str, list[float]] = {}
-    for modality, encode_fn in _ENCODERS.items():
-        try:
-            vectors[modality] = encode_fn(query)
-        except Exception as exc:  # noqa: BLE001 - one modality failing must not fail the request
-            logger.warning("Encoding failed for modality '%s': %s", modality, exc)
+    for future, modality in futures.items():
+        result = future.result()
+        if result is not None:
+            vectors[modality] = result
     return vectors

@@ -13,6 +13,7 @@ export default function ResultsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [latencyMs, setLatencyMs] = useState(null)
   const [source, setSource] = useState('live')
+  const [errorMessage, setErrorMessage] = useState(null)
 
   useEffect(() => {
     if (!query) {
@@ -25,10 +26,11 @@ export default function ResultsPage() {
     setIsLoading(true)
 
     const t0 = performance.now()
-    searchApi(query).then(({ results, source }) => {
+    searchApi(query).then(({ results, source, error }) => {
       if (cancelled) return
       setResults(results)
       setSource(source)
+      setErrorMessage(error ?? null)
       setLatencyMs(Math.round(performance.now() - t0))
       setIsLoading(false)
     })
@@ -54,6 +56,18 @@ export default function ResultsPage() {
       <main className="results-main">
         <SearchBar defaultValue={query} onSearch={handleSearch} />
 
+        {source === 'mock' && (
+          <div className="mock-mode-banner font-mono" role="status">
+            ⚠ MOCK MODE — showing fake data, not a real backend response (VITE_USE_MOCK_DATA=true)
+          </div>
+        )}
+
+        {!isLoading && source === 'error' && (
+          <div className="error-banner font-mono" role="alert">
+            search failed: {errorMessage || 'backend unreachable'}
+          </div>
+        )}
+
         <div className="results-status font-mono">
           {isLoading ? (
             <span>searching…</span>
@@ -76,7 +90,7 @@ export default function ResultsPage() {
         </div>
 
         <div className="results-list">
-          {!isLoading && results.length === 0 && (
+          {!isLoading && source !== 'error' && results.length === 0 && (
             <p className="results-empty font-mono">no matching windows found</p>
           )}
           {results.map((result) => (

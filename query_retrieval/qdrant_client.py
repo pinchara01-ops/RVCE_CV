@@ -2,8 +2,16 @@
 
 Every search_* function returns a normalized list of dicts:
     {"window_id": str, "score": float, "payload": dict}
-and never raises — Qdrant errors or an empty/missing collection are logged
-and result in an empty list, so downstream fusion code stays simple.
+for the common cases: a genuinely empty/missing collection, or a structured
+"bad response" from a live server (e.g. querying a collection that was
+never created) — both logged and returned as [], so downstream fusion code
+stays simple and a not-yet-indexed collection isn't treated as an outage.
+
+A real connection-level failure (Qdrant unreachable: connection refused,
+DNS failure, timeout) is a different situation — the server isn't there to
+give any response, structured or otherwise — and is NOT swallowed: it's
+raised as QdrantSearchError so api.py can return a clear 503 instead of a
+misleading empty result set that looks identical to "no matches".
 """
 import logging
 
@@ -16,6 +24,13 @@ from query_retrieval import config
 logger = logging.getLogger(__name__)
 
 _client: QdrantClient | None = None
+
+
+class QdrantSearchError(Exception):
+    """Raised when a Qdrant search genuinely fails to reach/complete against
+    the server (connection refused, timeout, DNS failure) — as opposed to a
+    structured response indicating zero hits or a missing collection, which
+    stays a normal empty list."""
 
 
 def connect_qdrant() -> QdrantClient:
@@ -61,11 +76,14 @@ def _search(vector_name: str, vector: list[float], top_k: int) -> list[dict]:
             with_payload=True,
         ).points
     except UnexpectedResponse as exc:
+        # A structured HTTP response from a live server (e.g. 404 on a
+        # collection that hasn't been created yet) - Qdrant is reachable,
+        # there's just nothing to find. Treated as a normal empty result.
         logger.warning("Qdrant search on '%s' failed (bad response): %s", vector_name, exc)
         return []
-    except Exception as exc:  # noqa: BLE001 - any connection/collection issue must not crash callers
-        logger.warning("Qdrant search on '%s' failed: %s", vector_name, exc)
-        return []
+    except Exception as exc:  # noqa: BLE001 - genuine connection failure, not a bad response
+        logger.warning("Qdrant search on '%s' failed (unreachable): %s", vector_name, exc)
+        raise QdrantSearchError(f"Qdrant search on '{vector_name}' failed: {exc}") from exc
 
     if not hits:
         logger.warning("Qdrant search on '%s' returned no results", vector_name)

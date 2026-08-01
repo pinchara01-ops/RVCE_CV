@@ -6,13 +6,15 @@
 //   request:  { query: string, top_k?: number }
 //   response: { results: SearchResultItem[] }
 //   SearchResultItem: { video_id, window_id, start, end, transcript,
-//                        caption, score, matched_modalities }
+//                        caption, score, matched_modalities,
+//                        modality_evidence, state }
 //
-// The backend is already built, tested (74/74), and stable, so this
-// calls it directly rather than staying mock-only. If the backend isn't
-// running (e.g. working on the frontend alone), this falls back to
-// MOCK_RESULTS so the UI still renders real-looking content - remove
-// the fallback once the backend is reliably available in your dev setup.
+// Mock data is OFF by default and only ever used when explicitly opted
+// into via VITE_USE_MOCK_DATA=true in frontend/.env.local - it is never
+// a silent fallback for a real backend failure. When the backend really
+// is unreachable or errors, this surfaces that as source: 'error' so the
+// UI shows a clear error state, not fake-looking results that could be
+// mistaken for real ones. See Section "Production safety" in the README.
 //
 // Override the backend URL with VITE_API_BASE_URL in a .env file if it's
 // not running on the default localhost:8000.
@@ -20,8 +22,14 @@
 import { MOCK_RESULTS } from '../data/mockResults.js'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA === 'true'
 
 export async function searchApi(query, topK = 10) {
+  if (USE_MOCK_DATA) {
+    console.warn('[searchApi] VITE_USE_MOCK_DATA=true - returning mock results, not calling the backend.')
+    return { results: MOCK_RESULTS, source: 'mock' }
+  }
+
   try {
     const response = await fetch(`${API_BASE_URL}/search`, {
       method: 'POST',
@@ -30,15 +38,18 @@ export async function searchApi(query, topK = 10) {
     })
 
     if (!response.ok) {
-      throw new Error(`Search request failed with status ${response.status}`)
+      const body = await response.json().catch(() => ({}))
+      const detail = body.detail || `status ${response.status}`
+      throw new Error(detail)
     }
 
     const data = await response.json()
     return { results: data.results, source: 'live' }
   } catch (err) {
-    // Backend unreachable (not running, wrong port, CORS, etc.) - fall
-    // back to mock data so the demo doesn't show a blank/broken page.
-    console.warn('[searchApi] backend unreachable, falling back to mock results:', err.message)
-    return { results: MOCK_RESULTS, source: 'mock' }
+    // Backend unreachable or returned an error (e.g. 503 when Qdrant/
+    // encoders are down) - surface this as an error state. Never
+    // silently substitute mock/fake results for a real failure.
+    console.error('[searchApi] search failed:', err.message)
+    return { results: [], source: 'error', error: err.message }
   }
 }

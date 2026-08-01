@@ -32,6 +32,17 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=10, ge=0, le=10000)
 
 
+class ModalityEvidence(BaseModel):
+    """One modality's contribution to a candidate's fused RRF score:
+    where it ranked in that modality's own search, and how much of the
+    total fused_score that rank position contributed (1/(k+rank)). A
+    candidate's modality_evidence entries always sum to its fused_score."""
+
+    modality: str
+    rank: int
+    contribution: float
+
+
 class SearchResultItem(BaseModel):
     video_id: str
     window_id: str
@@ -41,6 +52,11 @@ class SearchResultItem(BaseModel):
     caption: str
     score: float
     matched_modalities: list[str]
+    modality_evidence: list[ModalityEvidence] = Field(default_factory=list)
+    # Only "retrieved" exists today - there's no verification stage yet.
+    # A plain str (not a Literal) so a future verification stage can add
+    # "verified" / "rejected" without a breaking schema change.
+    state: str = "retrieved"
 
 
 class SearchResponse(BaseModel):
@@ -48,12 +64,13 @@ class SearchResponse(BaseModel):
 
 
 class FusedHit(BaseModel):
-    """Result of weighted RRF fusion across modality search results."""
+    """Result of unweighted RRF fusion across modality search results."""
 
     window_id: str
     fused_score: float
     payload: WindowPayload
     matched_modalities: list[str]
+    modality_evidence: list[ModalityEvidence] = Field(default_factory=list)
 
 
 class MergedRegion(BaseModel):
@@ -67,3 +84,7 @@ class MergedRegion(BaseModel):
     payload: WindowPayload
     matched_modalities: list[str]
     source_window_ids: list[str]
+    # Score breakdown of the single constituent FusedHit that fused_score
+    # was taken from (same one payload comes from) - not a merge across
+    # every constituent, so entries still sum exactly to fused_score.
+    modality_evidence: list[ModalityEvidence] = Field(default_factory=list)

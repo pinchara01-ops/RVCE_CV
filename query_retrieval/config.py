@@ -67,3 +67,11 @@ BGE_M3_MODEL_NAME: str = os.getenv("BGE_M3_MODEL_NAME", "BAAI/bge-m3")
 # Two same-video windows merge if they overlap in time, or the gap between
 # one's end and the next's start is <= this many seconds.
 MERGE_GAP_SECONDS: float = float(os.getenv("MERGE_GAP_SECONDS", "5.0"))
+
+# A chain of gap-qualifying windows would otherwise merge without limit
+# (A-B-C-D-E... all within MERGE_GAP_SECONDS of each other collapses into
+# one region spanning the whole chain) - these two caps bound that. Either
+# one being exceeded splits the chain into a new region; a long video with
+# near-continuous activity can't swallow itself into a single giant result.
+MAX_MERGE_DURATION_SECONDS: float = float(os.getenv("MAX_MERGE_DURATION_SECONDS", "60.0"))
+MAX_MERGE_WINDOW_COUNT: int = _int("MAX_MERGE_WINDOW_COUNT", 8)
