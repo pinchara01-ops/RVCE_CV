@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 
 
@@ -13,6 +13,9 @@ class Settings:
     batch_size: int = 8
     whisper_model: str = "small"
     vlm_model: str = "Qwen/Qwen2.5-VL-7B-Instruct"
+    vlm_provider: str = "local"
+    vlm_base_url: str | None = None
+    vlm_api_key: str | None = field(default=None, repr=False)
     vlm_timeout_seconds: float = 120
     vlm_retries: int = 2
     vlm_selection_enabled: bool = True
@@ -67,6 +70,9 @@ class Settings:
             batch_size=int(os.getenv("BATCH_SIZE", "8")),
             whisper_model=os.getenv("WHISPER_MODEL", "small"),
             vlm_model=os.getenv("VLM_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct"),
+            vlm_provider=os.getenv("VLM_PROVIDER", "local"),
+            vlm_base_url=os.getenv("VLM_BASE_URL"),
+            vlm_api_key=os.getenv("VLM_API_KEY"),
             vlm_timeout_seconds=float(os.getenv("VLM_TIMEOUT_SECONDS", "120")),
             vlm_retries=int(os.getenv("VLM_RETRIES", "2")),
             vlm_selection_enabled=os.getenv("VLM_SELECTION_ENABLED", "true").lower()

@@ -24,6 +24,10 @@ Defaults are shown in `.env.processing.example`. The initial thresholds are visu
 
 These defaults are engineering starting points, not accuracy claims. Tune them with labelled real videos and report call reduction separately from retrieval accuracy.
 
+`VLM_MAX_GAP_WINDOWS=3` is measured in window starts, not window duration. With the default five-second stride, the periodic refresh allows at most approximately 15 seconds between selected-window start times (`3 × 5s`), not 30 seconds.
+
+For an OpenAI-compatible hosted Qwen vision endpoint, set `VLM_PROVIDER=openai_compatible`, `VLM_BASE_URL`, `VLM_API_KEY`, `VLM_MODEL`, `VLM_TIMEOUT_SECONDS`, and `VLM_RETRIES`. The key is read only from the environment. The provider sends temporally distributed JPEG data URLs, requests a JSON object, applies limited retries/timeouts, and validates the returned content with the same `VLMDescription` Pydantic model. Leave `VLM_PROVIDER=local` for Hugging Face inference.
+
 Every point retains all four named vectors. Direct captions have `caption_direct=true`. A skipped window may receive bounded, action-free scene context from the nearest successful direct window and is marked `caption_inherited=true`, `vlm_processed=false`, with its source and distance. With no safe source, `caption=""` and `caption_available=false`; its caption vector is the BGE-M3 encoding of the explicit `[CAPTION UNAVAILABLE]` sentinel. This maintains the fixed Qdrant schema without fabricating evidence.
 
 The query pipeline must give full caption contribution only to direct captions, discount inherited captions, ignore caption vectors when `caption_available=false`, never treat inherited context as proof of a window-specific action, and use the actual candidate clip for final verification.

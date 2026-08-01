@@ -31,7 +31,7 @@ def main():
         from .visual_encoder import XClipVisualEncoder
         from .audio_encoder import ClapAudioEncoder
         from .text_encoder import BgeM3TextEncoder
-        from .vlm import LocalQwenProvider
+        from .vlm import HostedQwenProvider, LocalQwenProvider
         from .qdrant_store import QdrantStore
         from .pipeline import ProcessingPipeline
 
@@ -44,12 +44,29 @@ def main():
             batch_size=args.batch_size,
         )
         client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
+        if settings.vlm_provider == "local":
+            vlm = LocalQwenProvider(
+                model_name=settings.vlm_model,
+                device=args.device,
+                timeout=settings.vlm_timeout_seconds,
+                retries=settings.vlm_retries,
+            )
+        elif settings.vlm_provider == "openai_compatible":
+            vlm = HostedQwenProvider(
+                base_url=settings.vlm_base_url,
+                api_key=settings.vlm_api_key,
+                model_name=settings.vlm_model,
+                timeout=settings.vlm_timeout_seconds,
+                retries=settings.vlm_retries,
+            )
+        else:
+            raise ValueError(f"Unsupported VLM_PROVIDER: {settings.vlm_provider}")
         pipeline = ProcessingPipeline(
             FasterWhisperTranscriber(device=args.device),
             XClipVisualEncoder(device=args.device),
             ClapAudioEncoder(device=args.device),
             BgeM3TextEncoder(device=args.device),
-            LocalQwenProvider(device=args.device),
+            vlm,
             QdrantStore(client, args.collection, args.batch_size),
             settings,
         )

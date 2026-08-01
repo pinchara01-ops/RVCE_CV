@@ -104,19 +104,19 @@ class ProcessingPipeline:
                     ):
                         selected.add(index + 1)
                         if (
-                            "previous_vlm_low_confidence"
+                            "previous_low_confidence"
                             not in decisions[index + 1].reasons
                         ):
                             decisions[index + 1].reasons.append(
-                                "previous_vlm_low_confidence"
+                                "previous_low_confidence"
                             )
                         decisions[index + 1].selected = True
                 except Exception as exc:
                     failures[index] = str(exc)
                     if index + 1 < len(prepared):
                         selected.add(index + 1)
-                        if "previous_vlm_failed" not in decisions[index + 1].reasons:
-                            decisions[index + 1].reasons.append("previous_vlm_failed")
+                        if "previous_vlm_failure" not in decisions[index + 1].reasons:
+                            decisions[index + 1].reasons.append("previous_vlm_failure")
                         decisions[index + 1].selected = True
             index += 1
         return direct, failures, selected

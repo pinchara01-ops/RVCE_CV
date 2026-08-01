@@ -112,20 +112,71 @@ def test_previous_vlm_failure_selects_next_window_for_recovery(tmp_path, monkeyp
     )
     assert vlm.calls[:2] == [0, 1]
     assert (
-        "previous_vlm_failed"
+        "previous_vlm_failure"
         in store.points[sorted(store.points)[1]][0].selection_reasons
     )
     assert report.failed_vlm_windows == 1
+    assert report.selected_vlm_windows == 3
+    assert report.successful_vlm_windows == 2
+    assert report.skipped_vlm_windows == 2
+    assert report.estimated_calls_saved == 2
+    assert report.selection_count_by_reason["previous_vlm_failure"] == 1
 
 
 def test_low_confidence_selects_next_window_earlier(tmp_path, monkeypatch):
     report, store, vlm = pipeline(tmp_path, monkeypatch, vlm=RecordingVLM({0: 0.2}))
     assert vlm.calls[:2] == [0, 1]
     assert (
-        "previous_vlm_low_confidence"
+        "previous_low_confidence"
         in store.points[sorted(store.points)[1]][0].selection_reasons
     )
     assert report.successful_vlm_windows == 3
+    assert report.selected_vlm_windows == 3
+    assert report.selection_count_by_reason["previous_low_confidence"] == 1
+
+
+def test_high_confidence_selected_call_does_not_promote_recovery(tmp_path, monkeypatch):
+    report, _, vlm = pipeline(tmp_path, monkeypatch, vlm=RecordingVLM({0: 0.9}))
+    assert vlm.calls == [0, 4]
+    assert report.selected_vlm_windows == 2
+
+
+def test_consecutive_failures_advance_once_per_window_and_terminate(
+    tmp_path, monkeypatch
+):
+    failures = {index: RuntimeError(f"failure {index}") for index in range(5)}
+    report, _, vlm = pipeline(tmp_path, monkeypatch, vlm=RecordingVLM(failures))
+    assert vlm.calls == [0, 1, 2, 3, 4]
+    assert report.selected_vlm_windows == 5
+    assert report.failed_vlm_windows == 5
+    assert report.successful_vlm_windows == 0
+    assert report.skipped_vlm_windows == 0
+
+
+def test_last_window_failure_never_promotes_beyond_video(tmp_path, monkeypatch):
+    report, _, vlm = pipeline(
+        tmp_path, monkeypatch, vlm=RecordingVLM({4: RuntimeError("last failed")})
+    )
+    assert vlm.calls == [0, 4]
+    assert report.selected_vlm_windows == 2
+    assert report.failed_vlm_windows == 1
+
+
+def test_ratio_cap_never_suppresses_recovery_call(tmp_path, monkeypatch):
+    settings = Settings(
+        vlm_max_gap_windows=99,
+        vlm_max_selected_ratio=0.01,
+        vlm_min_direct_confidence=0.5,
+    )
+    report, _, vlm = pipeline(
+        tmp_path,
+        monkeypatch,
+        vlm=RecordingVLM({0: RuntimeError("down")}),
+        settings=settings,
+    )
+    assert vlm.calls == [0, 1, 4]
+    assert report.selected_vlm_windows == 3
+    assert report.selected_ratio == 0.6
 
 
 def test_adjacent_overlapping_same_event_is_not_called_twice(tmp_path, monkeypatch):

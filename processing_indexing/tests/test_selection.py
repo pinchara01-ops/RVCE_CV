@@ -91,6 +91,14 @@ def test_periodic_max_gap_refresh():
     assert [d.index for d in decisions if "max_gap" in d.reasons] == [3, 6]
 
 
+def test_three_window_gap_is_three_strides_or_fifteen_seconds_by_default():
+    decisions = select_vlm_windows([entry()] * 7, Settings(vlm_max_gap_windows=3))
+    selected_starts = [
+        decision.index * 5 for decision in decisions if decision.selected
+    ]
+    assert selected_starts[:3] == [0, 15, 30]
+
+
 def test_last_vlm_comparison_detects_gradual_change():
     settings = Settings(
         vlm_visual_change_threshold=0.12,

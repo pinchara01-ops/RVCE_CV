@@ -1,4 +1,5 @@
 import concurrent.futures
+import base64
 import json
 from pathlib import Path
 from typing import Protocol, Callable
@@ -101,3 +102,66 @@ class LocalQwenProvider(RetryingVLMProvider):
         return self._processor.batch_decode(
             trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )[0]
+
+
+class HostedQwenProvider(RetryingVLMProvider):
+    """OpenAI-compatible hosted Qwen vision provider; credentials stay in memory."""
+
+    def __init__(
+        self, base_url, api_key, model_name, timeout=120, retries=2, client=None
+    ):
+        if not base_url:
+            raise ValueError("VLM_BASE_URL is required for the hosted provider")
+        if not api_key:
+            raise ValueError("VLM_API_KEY is required for the hosted provider")
+        import httpx
+
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model_name = model_name
+        self.client = client or httpx.Client(timeout=timeout)
+        super().__init__(self._request, timeout, retries)
+
+    def _encode_frames(self, video_path, window):
+        import cv2
+        import numpy as np
+
+        capture = cv2.VideoCapture(str(video_path))
+        frames = []
+        for timestamp in np.linspace(window.start, window.end, 8, endpoint=False):
+            capture.set(cv2.CAP_PROP_POS_MSEC, float(timestamp) * 1000)
+            ok, frame = capture.read()
+            if not ok:
+                capture.release()
+                raise VLMError(f"Could not decode hosted VLM frame at {timestamp}s")
+            ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if not ok:
+                capture.release()
+                raise VLMError(f"Could not encode hosted VLM frame at {timestamp}s")
+            frames.append(
+                "data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii")
+            )
+        capture.release()
+        return frames
+
+    def _request(self, video_path, window, prompt):
+        content = [
+            {"type": "image_url", "image_url": {"url": frame}}
+            for frame in self._encode_frames(video_path, window)
+        ]
+        content.append({"type": "text", "text": prompt})
+        response = self.client.post(
+            f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": content}],
+                "response_format": {"type": "json_object"},
+                "temperature": 0,
+            },
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
