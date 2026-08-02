@@ -76,13 +76,23 @@ MERGE_GAP_SECONDS: float = float(os.getenv("MERGE_GAP_SECONDS", "5.0"))
 MAX_MERGE_DURATION_SECONDS: float = float(os.getenv("MAX_MERGE_DURATION_SECONDS", "60.0"))
 MAX_MERGE_WINDOW_COUNT: int = _int("MAX_MERGE_WINDOW_COUNT", 8)
 
-# --- LLM (Gemini) - query decomposition and verification ---
+# --- LLM (Groq) - query decomposition and verification ---
 # Both features are independently killable and both degrade to exactly
 # today's tested behavior (equal-weight, no verification) on any failure -
 # see decomposition.py / verification.py module docstrings and the
 # README's "Kill switch reference" table.
-GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GROQ_API_KEY: str | None = os.getenv("GROQ_API_KEY")
+# openai/gpt-oss-20b chosen over qwen/qwen3-32b after live testing both:
+# gpt-oss-20b gave consistent 0.42-0.96s latency with clean JSON in a
+# separate content field from its reasoning; qwen took 3.4-4.15s, dumped
+# raw chain-of-thought into content itself (breaking JSON parsing), and
+# failed to complete within its token budget on one run. See README
+# Section 2 for the full comparison.
+GROQ_MODEL: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+# 0 = deterministic, matches what was live-tested. Not exposed as a
+# per-call override - both decomposition and verification want the same
+# reproducible behavior.
+GROQ_TEMPERATURE: float = 0
 
 def _default_decomposition_enabled(key: str | None) -> bool:
     """Pure function, directly unit-testable without reloading this
@@ -92,15 +102,15 @@ def _default_decomposition_enabled(key: str | None) -> bool:
 
 
 # Decomposition defaults ON when a key is present, but this is a genuinely
-# separate flag from key-presence (not `bool(GEMINI_API_KEY)` inline at
+# separate flag from key-presence (not `bool(GROQ_API_KEY)` inline at
 # every call site) specifically so it can be force-disabled even with a
 # valid key - e.g. to reproduce/debug the pre-decomposition baseline
 # without unsetting the key.
 ENABLE_QUERY_DECOMPOSITION: bool = _bool(
-    "ENABLE_QUERY_DECOMPOSITION", default=_default_decomposition_enabled(GEMINI_API_KEY)
+    "ENABLE_QUERY_DECOMPOSITION", default=_default_decomposition_enabled(GROQ_API_KEY)
 )
 # Deliberately much tighter than the old (removed) router's 3s timeout -
-# a daemon-thread hard-kill (see gemini_client.call_with_hard_timeout),
+# a daemon-thread hard-kill (see groq_client.call_with_hard_timeout),
 # not a library-level timeout, so this bound is real regardless of what
 # the underlying HTTP call is doing. 2.0s gives comfortable margin above
 # real measured single-request latency for this call (0.2-1.3s observed

@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-This module is the **Query & Retrieval** half of a multimodal video search system built for a hackathon. Given a raw text query, it optionally decomposes the query per-modality via an LLM (Gemini), encodes it into all 4 modality embedding spaces (visual / audio / speech / caption) regardless, searches a Qdrant collection per modality, fuses the ranked lists into one via (optionally weighted) Reciprocal Rank Fusion, merges overlapping/adjacent hits from the same video into coherent regions, and returns a single ranked JSON response. A separate, optional, non-blocking `/verify` endpoint can text-check the top candidates against the query afterward.
+This module is the **Query & Retrieval** half of a multimodal video search system built for a hackathon. Given a raw text query, it optionally decomposes the query per-modality via an LLM (Groq, `openai/gpt-oss-20b`), encodes it into all 4 modality embedding spaces (visual / audio / speech / caption) regardless, searches a Qdrant collection per modality, fuses the ranked lists into one via (optionally weighted) Reciprocal Rank Fusion, merges overlapping/adjacent hits from the same video into coherent regions, and returns a single ranked JSON response. A separate, optional, non-blocking `/verify` endpoint can text-check the top candidates against the query afterward.
 
 Every LLM-touching piece (decomposition, verification) is independently toggleable and fails safe: off, missing key, timeout, or malformed response all degrade to exactly the same behavior as if the feature didn't exist. See **"Kill switch reference"** in Section 8.
 
@@ -20,7 +20,7 @@ A demo frontend lives in `/frontend` and already calls this module's real `/sear
                         |  Query Decomposition     |  decomposition.py
                         |  (if ENABLE_QUERY_        |
                         |   DECOMPOSITION)          |
-                        |  cache -> live Gemini     |
+                        |  cache -> live Groq       |
                         |  (hard 2.0s timeout) ->   |
                         |  deterministic fallback   |
                         +--------------------------+
@@ -109,27 +109,41 @@ Patching the keyword list indefinitely wasn't a real fix. An LLM router was also
 
 ### Reintroducing an LLM step - query decomposition and verification
 
-Query decomposition and text-only verification are now implemented, deliberately designed to avoid the specific failure mode that got the earlier LLM router idea shelved: that implementation made `/search` synchronously wait on a single Gemini call with no hard ceiling on how long it could actually take (a *library-level* timeout parameter, not a real hard-kill). This implementation is architecturally different in three ways:
+Query decomposition and text-only verification are now implemented, deliberately designed to avoid the specific failure mode that got the earlier LLM router idea shelved: that implementation made `/search` synchronously wait on a single LLM call with no hard ceiling on how long it could actually take (a *library-level* timeout parameter, not a real hard-kill). This implementation is architecturally different in three ways:
 
-1. **A three-tier fallback ladder, not a single call.** `decomposition.py`'s `decompose_query()` tries, in order: an exact-match local cache (instant, no network), then a live Gemini call bounded by a genuinely hard timeout (see #2), then a deterministic fallback that's behaviorally identical to "no decomposition at all". Any failure at any tier - timeout, network error, malformed JSON, missing key, flag off - falls through to the next tier; the fallback tier can never itself fail. See `decomposition.py`'s module docstring and `tests/test_decomposition.py`.
-2. **A genuine hard timeout, not a library one.** `gemini_client.call_with_hard_timeout()` runs the LLM call in a daemon thread and hard-joins it with a wall-clock deadline (`DECOMPOSITION_TIMEOUT_SECONDS`, default **2.0s** - see the latency numbers below for why) - the calling code gets control back at the deadline regardless of what the underlying HTTP call is doing, unlike an SDK's own `timeout=` parameter which only bounds a specific request and can still leave the caller blocked on retries/DNS/connection setup it isn't tracking. See `tests/test_gemini_client.py::test_call_with_hard_timeout_raises_timeout_error_and_returns_promptly`.
+1. **A three-tier fallback ladder, not a single call.** `decomposition.py`'s `decompose_query()` tries, in order: an exact-match local cache (instant, no network), then a live LLM call bounded by a genuinely hard timeout (see #2), then a deterministic fallback that's behaviorally identical to "no decomposition at all". Any failure at any tier - timeout, network error, malformed JSON, missing key, flag off - falls through to the next tier; the fallback tier can never itself fail. See `decomposition.py`'s module docstring and `tests/test_decomposition.py`.
+2. **A genuine hard timeout, not a library one.** `groq_client.call_with_hard_timeout()` runs the LLM call in a daemon thread and hard-joins it with a wall-clock deadline (`DECOMPOSITION_TIMEOUT_SECONDS`, default **2.0s** - see the latency numbers below for why) - the calling code gets control back at the deadline regardless of what the underlying HTTP call is doing, unlike an SDK's own `timeout=` parameter which only bounds a specific request and can still leave the caller blocked on retries/DNS/connection setup it isn't tracking. See `tests/test_groq_client.py::test_call_with_hard_timeout_raises_timeout_error_and_returns_promptly`.
 3. **Verification is a separate, later, non-blocking call - never inline with retrieval.** Even bounded by a hard timeout, decomposition adding to every `/search` call was judged an acceptable cost (it directly improves retrieval quality by weighting modalities), but a *second* LLM call per candidate for verification was not worth that same risk stacked on top. So verification lives entirely behind its own `POST /verify` endpoint, called by the frontend only after `/search` has already returned and rendered results - a slow or completely failed verification pass has zero effect on `/search`'s response time, ever (see `tests/test_decomposition_integration.py::test_verify_does_not_block_search_and_search_timing_is_unaffected`).
 
-Both features are still fully killable independently of each other and of `GEMINI_API_KEY`'s presence - see the **Kill switch reference** table in Section 8.
+Both features are still fully killable independently of each other and of `GROQ_API_KEY`'s presence - see the **Kill switch reference** table in Section 8.
+
+### Provider: Gemini → Groq (`openai/gpt-oss-20b`)
+
+This module originally called Gemini (`gemini-2.5-flash`) for both decomposition and verification. It has been switched to **Groq**, serving **`openai/gpt-oss-20b`**, via Groq's OpenAI-compatible REST endpoint (`https://api.groq.com/openai/v1/chat/completions` - a plain `httpx` POST, no SDK dependency). The switch was made after live-testing two candidate Groq models side by side:
+
+| Model | Latency | JSON quality | Verdict |
+|---|---|---|---|
+| **`openai/gpt-oss-20b`** (chosen) | **0.42s - 0.96s**, consistent | Clean JSON, delivered in a separate `content` field from `reasoning` (see below) | ✅ used |
+| `qwen/qwen3-32b` | 3.4s - 4.15s | Dumped raw chain-of-thought directly into `content` itself, breaking JSON parsing; failed to finish within its token budget on one test run | ❌ rejected |
+
+**Technical note - `reasoning` vs. `content`:** `gpt-oss-20b`'s response message carries its chain-of-thought and its final answer as **two separate JSON fields**, `message.reasoning` and `message.content`. This is expected behavior for this model, not an error. `groq_client.chat_completion()` parses **only `message.content`**; `message.reasoning` is never read, even to work around a bad response. If `content` is empty or missing (e.g. the model ran out of token budget before finishing, as seen with `qwen3-32b` above), that's treated as a malformed-response failure and falls through to the next tier - there is deliberately no fallback path that tries to extract JSON out of `reasoning` instead. See `groq_client.py`'s module docstring and `test_groq_client.py`'s `test_chat_completion_ignores_reasoning_field_entirely` / `test_chat_completion_raises_on_missing_content_even_with_reasoning_present`.
+
+**Technical note - the few-shot requirement (do not simplify this prompt):** an early version of the decomposition prompt gave `gpt-oss-20b` only a JSON schema description (field names + a `0.0` placeholder shape) with no worked example of real computed weights. Under that prompt, the model would literally echo the placeholder zeros back as the answer (e.g. `{"visual": 0.0, "audio": 0.0, "speech": 0.0, "caption": 0.0}` for `"a dog barking near a fence"`) instead of computing real weights for the query. The fix, now baked into `decomposition.py`'s `_DECOMPOSITION_PROMPT`, is to include **at least one full worked example with real, non-uniform, correctly-zeroed weights** (currently two), plus an explicit instruction that weights must reflect this specific query and must never just copy the template's placeholder values. This is load-bearing: removing the worked examples to "simplify" the prompt later will very likely reintroduce the all-zero echo bug. See `test_decomposition.py::test_live_decomposition_weights_are_not_all_zero_placeholder_echo` - a permanent regression test for this exact failure mode.
+
+`temperature` is set to `0` (`config.GROQ_TEMPERATURE`) for both decomposition and verification, matching what was live-tested.
 
 **Real measured latency:**
 
 | Scenario | avg | notes |
 |---|---|---|
-| `ENABLE_QUERY_DECOMPOSITION=false` (baseline `/search`) | **~290ms** | no Gemini call involved |
-| Decomposition on, **cache hit** | **~266ms** | no measurable overhead vs. baseline - no network call either, real Gemini-derived weights served from `decomposition_cache.json` |
-| Live decomposition call (Gemini `gemini-2.5-flash`), measured from a normal (non-sandboxed) network path | **0.2s - 1.3s across 10 consecutive calls** | ordinary single-request API latency, nothing unusual |
+| `ENABLE_QUERY_DECOMPOSITION=false` (baseline `/search`) | **~290ms** | no LLM call involved |
+| Decomposition on, **cache hit** | **~266ms** | no measurable overhead vs. baseline - no network call either, real Groq-derived weights served from `decomposition_cache.json` |
+| Live decomposition call (Groq `openai/gpt-oss-20b`), a single short prompt, live-tested | **0.42s - 0.96s** | the number that drove the provider choice above |
+| Live decomposition call **through the actual `decompose_query()` path** (full few-shot prompt, 4 fresh uncached queries) | **1.10s - 1.31s** | slightly higher than the raw single-call number above because the full prompt (two worked examples) is longer than a trivial test prompt; still comfortably inside the 2.0s hard timeout |
 
-Query decomposition works correctly and completes within normal API response time on a standard network connection - it is not slow or unreliable by nature. `DECOMPOSITION_TIMEOUT_SECONDS` defaults to **2.0s**, comfortably above the observed 1.3s upper end, so live decomposition should complete well within budget under normal conditions rather than triggering the fallback tier on ordinary latency variance.
+`DECOMPOSITION_TIMEOUT_SECONDS` defaults to **2.0s**, comfortably above the observed ~1.3s upper end for the full decomposition prompt, so live decomposition should complete well within budget under normal conditions rather than triggering the fallback tier on ordinary latency variance.
 
-An earlier version of these latency measurements, taken from inside this project's sandboxed development environment, showed live Gemini calls consistently taking 4-10s and occasionally far more - that made it look like the live tier would time out routinely even at a generous timeout. That was a false signal from the sandbox's own network path, not a real characteristic of the Gemini API or this module's implementation; testing from a real machine outside the sandbox showed ordinary latency instead (the table above). The three-tier fallback ladder is unaffected by this correction and remains exactly as designed - it's **standard defensive design for any external API dependency** (genuine network issues, transient API unavailability, a key running out of quota), not a workaround for a latency problem that doesn't actually exist.
-
-Real example decomposition (`"a dog barking near a fence"`, live Gemini call, now cached): `visual_query="dog near a fence"`, `audio_query="dog barking sounds"`, `speech_query=""`, `caption_query="a dog barking near a fence"`, `weights={"visual": 0.4, "audio": 0.4, "speech": 0.0, "caption": 0.2}`, `required_conditions=["a dog is barking", "a fence is present", "the dog is near the fence"]` - correctly zeroed `speech`, split `visual`/`audio` evenly, derived real verification conditions.
+Real example decomposition (`"a dog barking near a fence"`, live Groq call, now cached): `visual_query="dog near a fence"`, `audio_query="dog barking sound"`, `speech_query=""`, `caption_query="a dog barking near a fence"`, `weights={"visual": 0.35, "audio": 0.45, "speech": 0.0, "caption": 0.2}`, `required_conditions=["a dog is barking", "a fence is present"]` - correctly zeroed `speech`, weighted `audio` slightly above `visual` (barking is primarily a sound), derived real verification conditions.
 
 `/verify` latency hasn't been measured live yet (a separate open item - see "Known blockers" below), but there's no reason to expect it to behave differently from decomposition's call shape above; `VERIFICATION_TIMEOUT_SECONDS` (2.0s) should give it the same comfortable margin.
 
@@ -166,7 +180,7 @@ About a **19% reduction** (~70ms/query) at this dev-scale collection (33 points)
 |---|---|
 | Query decomposition (optional) | `decomposition.py` |
 | Verification (optional, separate endpoint) | `verification.py` |
-| Shared Gemini client/timeout/JSON parsing | `gemini_client.py` |
+| Shared Groq client/timeout/JSON parsing | `groq_client.py` |
 | Query embedding | `encoders.py` |
 | Qdrant connection, search, schema validation, seeding | `qdrant_client.py`, `seed_dummy_data.py` |
 | Fusion | `fusion.py` |
@@ -180,8 +194,8 @@ About a **19% reduction** (~70ms/query) at this dev-scale collection (33 points)
 - **Qdrant** — vector database, named-vector collection (`qdrant-client`)
 - **FastAPI** + **pydantic** — HTTP contract and typed models
 - **X-CLIP** (`microsoft/xclip-base-patch32`), **CLAP** (`laion/clap-htsat-unfused`), **BGE-M3** (`BAAI/bge-m3`) — query text encoders, via `transformers` / `sentence-transformers`, run on CPU by default
-- **Gemini** (`gemini-2.5-flash` by default, via `google-genai`) — optional, for query decomposition and text-only verification; both features are independently killable and degrade to exactly the pre-LLM behavior on any failure (see Section 8's Kill switch reference)
-- **pytest** — 124 tests, no real network/model calls by default (Gemini calls are mocked at the client boundary in every test)
+- **Groq** (`openai/gpt-oss-20b` by default, via a plain OpenAI-compatible `httpx` REST call - no SDK) — optional, for query decomposition and text-only verification; both features are independently killable and degrade to exactly the pre-LLM behavior on any failure (see Section 8's Kill switch reference)
+- **pytest** — 133 tests, no real network/model calls by default (Groq calls are mocked at the client boundary in every test)
 
 No query routing (a keyword-based classifier, removed for a real substring-matching bug and a hard vocabulary ceiling — see Section 2) and no VLM/frame-based verification (blocked on a missing payload field — see Section 8) remain out of this pipeline. Query decomposition and text-only verification *are* now in the pipeline, both LLM-based, both off by default or fail-safe when on — see Section 2.
 
@@ -253,15 +267,15 @@ pip install -r requirements.txt
 | `MERGE_GAP_SECONDS` | no | `5.0` | window merge time-gap threshold |
 | `DEVICE` | no | `cpu` | encoder device |
 | `HF_HUB_OFFLINE` | no | unset | set to `1` once models are cached — see cold start below |
-| `GEMINI_API_KEY` | no | none | enables the live tier of decomposition/verification when present (in `query_retrieval/.env`, gitignored) |
-| `GEMINI_MODEL` | no | `gemini-2.5-flash` | model used for both decomposition and verification |
-| `ENABLE_QUERY_DECOMPOSITION` | no | `true` if `GEMINI_API_KEY` is set, else `false` | see Section 8 Kill switch reference |
+| `GROQ_API_KEY` | no | none | enables the live tier of decomposition/verification when present (in `query_retrieval/.env`, gitignored) |
+| `GROQ_MODEL` | no | `openai/gpt-oss-20b` | model used for both decomposition and verification - see Section 2 "Provider: Gemini → Groq" for why this model was chosen |
+| `ENABLE_QUERY_DECOMPOSITION` | no | `true` if `GROQ_API_KEY` is set, else `false` | see Section 8 Kill switch reference |
 | `DECOMPOSITION_TIMEOUT_SECONDS` | no | `2.0` | hard per-request timeout for the live decomposition call — comfortable margin above observed real-world latency (0.2s-1.3s, see Section 2) |
 | `ENABLE_VERIFICATION` | no | `false` | explicit opt-in even with a key present — see Section 8 |
 | `VERIFICATION_TIMEOUT_SECONDS` | no | `2.0` | hard per-candidate timeout for the live verification call |
 | `VERIFICATION_TOP_N` | no | `5` | only the top-N candidates by fused_score get verified per `/verify` call |
 
-`GEMINI_API_KEY` unset (or `ENABLE_QUERY_DECOMPOSITION`/`ENABLE_VERIFICATION` explicitly `false`) means zero network calls are ever attempted for either feature — see Section 8's Kill switch reference for exactly what's tested.
+`GROQ_API_KEY` unset (or `ENABLE_QUERY_DECOMPOSITION`/`ENABLE_VERIFICATION` explicitly `false`) means zero network calls are ever attempted for either feature — see Section 8's Kill switch reference for exactly what's tested.
 
 **Start Qdrant** (as used throughout development):
 ```bash
@@ -274,11 +288,11 @@ python -m query_retrieval.seed_dummy_data
 ```
 Seeds 33 points covering: visual-only / audio-only / all-4-modality windows, overlapping same-event windows, fully disjoint windows, a deliberately near-identical "true match" pair, a deliberate hard negative, a short (2-window) video, a long video mixing tightly-clustered and far-apart windows, two different videos with near-identical content at identical timestamps (proves merge never crosses `video_id`), and edge-case timestamps (zero-duration window, very large start/end).
 
-**Pre-seed the decomposition cache** (optional, needs a real `GEMINI_API_KEY`; demo queries then hit the cache tier and never touch the network):
+**Pre-seed the decomposition cache** (optional, needs a real `GROQ_API_KEY`; demo queries then hit the cache tier and never touch the network):
 ```bash
 python -m query_retrieval.seed_decomposition_cache
 ```
-Populates `decomposition_cache.json` with real Gemini decompositions for a curated demo query list (extends `demo_queries.py`'s list). **Only partially run for this repo's committed cache** — an earlier Gemini key's free-tier daily quota (20 requests/day) was exhausted by connectivity testing before the full `DEMO_QUERIES` list could be pre-seeded; a fresh key was then used to seed 3 real entries directly (not the full list, to conserve that key's quota too - see Section 2 for one of those entries as a real example). `decomposition_cache.json` currently has these 3 entries; the other ~17 queries in `DEMO_QUERIES` still need a seeding run before a real demo — quick to do given normal decomposition latency (Section 2), the only constraint is free-tier request quota. The script and cache-lookup mechanism are also exercised by `tests/test_decomposition.py`'s cache-hit test (against a temp cache file, not the real one).
+Populates `decomposition_cache.json` with real Groq (`openai/gpt-oss-20b`) decompositions for a curated demo query list (extends `demo_queries.py`'s list). **All 20 `DEMO_QUERIES` entries are now cached** (re-seeded as part of the Gemini→Groq provider swap) - spot-checked and all show real, non-uniform, correctly-zeroed weights (e.g. `"person wearing glasses"` → `{"visual": 0.85, "audio": 0.0, "speech": 0.0, "caption": 0.15}`, `"someone says hello"` → `{"visual": 0.15, "audio": 0.0, "speech": 0.7, "caption": 0.15}`), not the placeholder-echo bug described in Section 2. Groq's free tier enforces a tokens-per-minute limit (not a daily request quota like the old Gemini free tier) - seeding the full list took a few sequential runs a bit under a minute apart to stay under it; the script's merge-not-overwrite behavior makes that safe to do incrementally. The script and cache-lookup mechanism are also exercised by `tests/test_decomposition.py`'s cache-hit test (against a temp cache file, not the real one).
 
 **Start the server:**
 ```bash
@@ -377,7 +391,7 @@ Separate from `/search` on purpose — see "Non-blocking verification design" in
 | `query` | `str` | required — the original search query |
 | `required_conditions` | `list[str]` | optional — if empty, falls back to whatever `decompose_query()` most recently derived for this exact query string (if decomposition is on), else empty |
 
-**Response** (shape, not real - no live Gemini calls could be made this session, see the latency note in Section 2):
+**Response** (shape, not real - no live `/verify` Groq calls were made this session; live testing this pass covered decomposition only, see the latency note in Section 2):
 ```json
 {
   "results": [
@@ -426,23 +440,23 @@ Returns `503 {"status": "loading"}` until encoder warmup genuinely completes, `2
 pytest query_retrieval/tests/ -q
 ```
 
-**Current status: 124/124 passing** (was 82/82 before this pass — 42 net-new tests across 5 new files plus additions to `test_fusion.py`, none deleted), ~6s, zero real network calls to Gemini or Qdrant-unreachable paths (Gemini is mocked at the client boundary in every test; encoders are mocked at the model-loader boundary).
+**Current status: 133/133 passing** (was 124/124 before the Gemini→Groq provider swap — net +9: `test_gemini_client.py` renamed to `test_groq_client.py` with added content/reasoning-parsing coverage, plus new regression tests in `test_decomposition.py`/`test_verification.py` for the reasoning-vs-content field split and the placeholder-echo weights bug, none deleted), ~6s, zero real network calls to Groq or Qdrant-unreachable paths (Groq is mocked at the client boundary in every test; encoders are mocked at the model-loader boundary).
 
 Coverage, by area:
 - **Encoders**: shape/dim correctness per modality, all 4 always called concurrently (no gating), partial-failure isolation (one modality failing doesn't fail the request)
 - **Fusion**: hand-computed unweighted RRF scores including a worked rank-1-vs-two-rank-10s example, summation-not-max verified explicitly, empty-results edge cases, modality_evidence rank/contribution correctness and sum-to-fused_score invariant, **weighted RRF: weights=None byte-identical to the unweighted baseline, weight scaling per modality, a weight-0 modality still contributes an evidence entry (just worth 0), equal-weight-fallback preserves ranking exactly** (new)
 - **Merging**: no-merge, simple overlap, chained A-B-C merge, cross-video never-merges, inclusive/exclusive gap boundary, bounded-merge splitting at MAX_MERGE_WINDOW_COUNT and MAX_MERGE_DURATION_SECONDS with hand-verified region boundaries, cap-splitting never crosses video_id, MergedRegion.modality_evidence sums to fused_score
 - **Integration/failure-path**: Qdrant genuinely unreachable → 503 with a descriptive error, all query encoders failing → 503, empty query, `top_k=0` and `top_k=10000`, zero-match query, `/health` gating, schema validator pass/fail, 4 concurrent Qdrant searches don't mix up results across modalities — all through the real `/search` endpoint
-- **`gemini_client.py`** (new, `test_gemini_client.py`): the hard-timeout wrapper genuinely returns control at the deadline for a function that's still running (not when it eventually finishes), re-raises the wrapped function's real exception, and the JSON parser handles markdown fences / stray text / garbage / non-object JSON
-- **`decomposition.py`** (new, `test_decomposition.py`): cache-hit returns without any network call attempted, live-tier parses a mocked valid response and normalizes weights that don't sum to 1.0, fallback triggers correctly on timeout / malformed JSON / missing required fields / flag off / no key, and the fallback result is asserted field-by-field to be behaviorally identical to "no decomposition"
-- **`verification.py`** (new, `test_verification.py`): all three states (verified/rejected/verification_unavailable) produced correctly, and a parametrized test forcing 4 different failure modes (timeout, malformed JSON, missing `match` field, network error, plus an unexpected-exception case) each individually asserts `state == "verification_unavailable"` and `match is None` — the hard requirement that failure can never look like a match
-- **Weighted-fusion + decomposition wiring** (new, `test_decomposition_integration.py`): a modality decomposition assigns weight 0.0 is still actually searched (call-counted, not just weight-checked), decomposition weights measurably flow through to the real `/search` response's `score`/`modality_evidence`, and `/verify` genuinely does not add latency to `/search` (a mocked 1.5s-slow verification call proves `/search`'s own response time is unaffected)
-- **Kill switches** (new, `test_kill_switches.py`): `ENABLE_QUERY_DECOMPOSITION=false` produces `/search` scores that hand-computation-match the unweighted RRF formula exactly (not just "similar ranking") and never calls `decompose_query()` at all; `ENABLE_VERIFICATION=false` makes `/verify` return 404 and `/health` report `verification_enabled: false`; `GEMINI_API_KEY` unset makes both decomposition and verification fall back/unavailable with zero network calls attempted; the `ENABLE_QUERY_DECOMPOSITION` default-derivation logic (on only when a key is present) is tested directly against its pure function
+- **`groq_client.py`** (`test_groq_client.py`): the hard-timeout wrapper genuinely returns control at the deadline for a function that's still running (not when it eventually finishes), re-raises the wrapped function's real exception, the JSON parser handles markdown fences / stray text / garbage / non-object JSON, and `chat_completion()` parses `message.content` while genuinely ignoring `message.reasoning` even when the two disagree, raising on empty/missing content
+- **`decomposition.py`** (`test_decomposition.py`): cache-hit returns without any network call attempted, live-tier parses a mocked valid response and normalizes weights that don't sum to 1.0, fallback triggers correctly on timeout / malformed JSON / missing required fields / empty-content-with-reasoning-present / flag off / no key, the fallback result is asserted field-by-field to be behaviorally identical to "no decomposition", **the reasoning field is proven ignored even when it contains conflicting weights** (`test_live_decomposition_ignores_reasoning_field_and_parses_content_only`), and **a permanent regression test for the placeholder-echo bug** (`test_live_decomposition_weights_are_not_all_zero_placeholder_echo`) asserts a real decomposition response's weights are neither all-zero nor uniformly equal
+- **`verification.py`** (`test_verification.py`): all three states (verified/rejected/verification_unavailable) produced correctly, the reasoning field is proven ignored the same way as decomposition, and a parametrized test forcing 5 different failure modes (timeout, malformed JSON, missing `match` field, empty-content-with-reasoning-present, network error, plus an unexpected-exception case) each individually asserts `state == "verification_unavailable"` and `match is None` — the hard requirement that failure can never look like a match
+- **Weighted-fusion + decomposition wiring** (`test_decomposition_integration.py`): a modality decomposition assigns weight 0.0 is still actually searched (call-counted, not just weight-checked), decomposition weights measurably flow through to the real `/search` response's `score`/`modality_evidence`, and `/verify` genuinely does not add latency to `/search` (a mocked 1.5s-slow verification call proves `/search`'s own response time is unaffected)
+- **Kill switches** (`test_kill_switches.py`): `ENABLE_QUERY_DECOMPOSITION=false` produces `/search` scores that hand-computation-match the unweighted RRF formula exactly (not just "similar ranking") and never calls `decompose_query()` at all; `ENABLE_VERIFICATION=false` makes `/verify` return 404 and `/health` report `verification_enabled: false`; `GROQ_API_KEY` unset makes both decomposition and verification fall back/unavailable with zero network calls attempted; the `ENABLE_QUERY_DECOMPOSITION` default-derivation logic (on only when a key is present) is tested directly against its pure function
 - **Comprehensive query variety**: pure visual/audio/speech/caption-flavored, mixed, gibberish, long paragraph, single-word, emoji/unicode, empty string
 - **Comprehensive video/window variety**: short/long/silent/full-modality videos, cross-video duplicates, zero-duration and huge-timestamp windows — against real seeded data, not synthetic
 - **System-level**: first-query-after-startup, 12 rapid sequential queries, 5 concurrent threaded requests (result-level cross-contamination check), malformed request bodies (422 not 500), empty-collection
 
-All pre-existing test fixtures that exercise the pipeline through the real `/search` endpoint (`test_integration.py`, `test_comprehensive.py`, `test_phase5_regression.py`) now explicitly pin `ENABLE_QUERY_DECOMPOSITION=False` (and `ENABLE_VERIFICATION=False`) via `monkeypatch` - this is necessary, not incidental: `GEMINI_API_KEY` is present in this repo's `query_retrieval/.env`, so decomposition defaults **on**, and without this pin every one of those 82 pre-existing tests would have silently started exercising the decomposition code path instead of the pipeline they were written to test.
+All pre-existing test fixtures that exercise the pipeline through the real `/search` endpoint (`test_integration.py`, `test_comprehensive.py`, `test_phase5_regression.py`) now explicitly pin `ENABLE_QUERY_DECOMPOSITION=False` (and `ENABLE_VERIFICATION=False`) via `monkeypatch` - this is necessary, not incidental: `GROQ_API_KEY` is present in this repo's `query_retrieval/.env`, so decomposition defaults **on**, and without this pin those tests would have silently started exercising the decomposition code path instead of the pipeline they were written to test.
 
 **Manual sanity check** — 15 curated realistic queries with readable printed output:
 ```bash
@@ -452,10 +466,10 @@ python demo_queries.py
 ## 8. Known Limitations / Read Before Demo
 
 - **Always searching all 4 modalities has a small, fixed latency cost**, lower since encoding/search run concurrently (~290ms steady-state; see Section 2 for the concurrency numbers and the decomposition latency numbers). Qdrant search/fusion/merge are negligible against that on this dev collection size — worth re-measuring against real indexed data volume before the actual demo, since Qdrant's own per-modality search cost will grow with real collection size in a way this dev-scale measurement doesn't capture.
-- **`decomposition_cache.json` is only partially seeded** — 3 of the ~20 curated `DEMO_QUERIES` (see `seed_decomposition_cache.py`) have real cached entries; the rest still hit the live/fallback tiers until a full seeding run is done. Run `python -m query_retrieval.seed_decomposition_cache` to fill in the rest before a real demo - this is quick and cheap now that live decomposition is confirmed to run at normal API latency (Section 2), not something to budget extra time around.
-- **`/verify` still has no real measured latency** — its non-blocking timing behavior is proven by tests, but a live Gemini call for verification specifically hasn't been made yet. No reason to expect it to behave differently from decomposition's now-confirmed-normal call latency, but it's still an open item.
+- **`decomposition_cache.json` is now fully seeded** — all 20 curated `DEMO_QUERIES` (see `seed_decomposition_cache.py`) have real Groq-derived cached entries, re-seeded as part of the Gemini→Groq provider swap and spot-checked for sensible, non-placeholder weights. Re-run `python -m query_retrieval.seed_decomposition_cache` if `DEMO_QUERIES` grows - Groq's free tier is tokens-per-minute limited, so a large batch may need a couple of ~1-minute-apart runs (safe, since the script merges rather than overwrites).
+- **`/verify` still has no real measured latency** — its non-blocking timing behavior is proven by tests, but a live Groq call for verification specifically hasn't been made yet. No reason to expect it to behave differently from decomposition's now-confirmed-normal call latency, but it's still an open item.
 - **Fresh machine setup needs one online run** before `HF_HUB_OFFLINE=1` works — it skips Hub metadata lookups but still needs the model weights already downloaded into the local cache from a prior online run.
-- **Never run against real indexed data.** Everything tested so far (124 tests + `demo_queries.py`) runs against synthetic seed data designed to exercise specific behaviors. Real captions/transcripts from the Processing team's pipeline could be empty, malformed, extremely long, non-English, or structured differently than the synthetic data assumes. This is the single biggest unknown before demo.
+- **Never run against real indexed data.** Everything tested so far (133 tests + `demo_queries.py`) runs against synthetic seed data designed to exercise specific behaviors. Real captions/transcripts from the Processing team's pipeline could be empty, malformed, extremely long, non-English, or structured differently than the synthetic data assumes. This is the single biggest unknown before demo.
 - **`validate_collection_schema()` has never run against a real (non-dev) collection.** It's built and tested against the seeded dev collection, and this pass reconfirmed that dev collection matches the contract exactly (Section 4) — but the real check, pointing it at the Processing team's actual production Qdrant collection, hasn't happened because that collection doesn't exist yet. Run it first, before anything else, the moment real data is available.
 - **Scale is untested.** The dev collection has 33 points; a real video corpus could be thousands or millions of windows. The latency numbers above are measured at toy scale — Qdrant's own per-modality search cost will grow with real data volume in a way this hasn't measured; concurrency should matter more at that scale, not less.
 - **`MERGE_GAP_SECONDS=5.0`, `MAX_MERGE_DURATION_SECONDS=60.0`, `MAX_MERGE_WINDOW_COUNT=8`, and `DEFAULT_TOP_K=15`** are reasonable defaults chosen without real data, not validated against the Processing team's actual windowing scheme (window size, overlap convention) or typical event duration. May need retuning once real windows are indexed.
@@ -471,9 +485,9 @@ Every LLM-touching behavior is independently controllable and verified by an exp
 |---|---|---|
 | `ENABLE_QUERY_DECOMPOSITION=false` | `/search` never calls `decompose_query()` at all; behavior and scores are byte-identical to the pre-decomposition baseline (`rrf_fuse(weights=None)`, its exact original formula) | `test_decomposition_off_search_scores_match_unweighted_rrf_exactly`, `test_decomposition_off_never_calls_decompose_query` |
 | `ENABLE_VERIFICATION=false` (default) | `POST /verify` returns `404 {"detail": "Verification is disabled..."}`; `GET /health` reports `verification_enabled: false`; the frontend checks this before ever calling `/verify`, so no "verifying…" state is shown | `test_verification_off_verify_endpoint_returns_404_disabled`, `test_verification_off_health_reports_verification_disabled` |
-| `GEMINI_API_KEY` unset | Both decomposition and verification skip the live tier entirely with **zero network call attempts** (proven by a mock that raises if the Gemini client is ever constructed) - decomposition falls back deterministically, verification returns `verification_unavailable` | `test_no_api_key_decomposition_falls_back_with_zero_network_calls`, `test_no_api_key_verification_unavailable_with_zero_network_calls` |
-| `ENABLE_QUERY_DECOMPOSITION` unset, `GEMINI_API_KEY` set | Decomposition defaults **on** (live tier attempted, falls back on failure) | `test_decomposition_default_enabled_derivation_depends_only_on_key_presence` |
-| `ENABLE_QUERY_DECOMPOSITION=false`, `GEMINI_API_KEY` set | Decomposition stays off - explicit flag always wins over key presence, for reproducing/debugging the pre-decomposition baseline without unsetting a working key | `test_bool_helper_lets_explicit_env_override_any_default` |
+| `GROQ_API_KEY` unset | Both decomposition and verification skip the live tier entirely with **zero network call attempts** (proven by a mock that raises if the Groq client is ever constructed) - decomposition falls back deterministically, verification returns `verification_unavailable` | `test_no_api_key_decomposition_falls_back_with_zero_network_calls`, `test_no_api_key_verification_unavailable_with_zero_network_calls` |
+| `ENABLE_QUERY_DECOMPOSITION` unset, `GROQ_API_KEY` set | Decomposition defaults **on** (live tier attempted, falls back on failure) | `test_decomposition_default_enabled_derivation_depends_only_on_key_presence` |
+| `ENABLE_QUERY_DECOMPOSITION=false`, `GROQ_API_KEY` set | Decomposition stays off - explicit flag always wins over key presence, for reproducing/debugging the pre-decomposition baseline without unsetting a working key | `test_bool_helper_lets_explicit_env_override_any_default` |
 | Any live LLM call timing out, erroring, or returning malformed JSON | Decomposition falls back (tier 3); verification returns `verification_unavailable` for that candidate only - **never** silently becomes a match | `test_decomposition.py`'s fallback tests, `test_forced_failure_never_produces_false_positive_match` |
 | `VITE_USE_MOCK_DATA=true` (frontend, off by default) | Frontend shows a visible `⚠ MOCK MODE` banner and never calls the real backend | see "Production safety" below |
 
@@ -499,7 +513,7 @@ What's still genuinely blocked, not forgotten:
 
 - **Frame-based / VLM verification** (looking at actual video frames, not just transcript/caption text) — blocked on a real schema gap, not a scope decision: there is no field on the Qdrant payload today that points at an actual video file, frame, or clip (Section 4). `verification.py` is deliberately text-only for exactly this reason. Upgrading it needs that field added to the indexing contract first; it isn't something this module can invent or stub in.
 - **This repo's `decomposition_cache.json` has only 3 real entries, not the full curated list** — the pre-seeding mechanism works (confirmed live - see Section 2 for a real example decomposition), it just wasn't run to completion for the full `DEMO_QUERIES` list yet (see Section 5's pre-seed instructions).
-- **Real `/verify` latency numbers are still needed** — the endpoint's non-blocking design and timing behavior are proven (Section 2, Section 7), but a live Gemini call for verification specifically hasn't been made yet.
+- **Real `/verify` latency numbers are still needed** — the endpoint's non-blocking design and timing behavior are proven (Section 2, Section 7), but a live Groq call for verification specifically hasn't been made yet.
 
 ## 9. Project Status
 
@@ -508,7 +522,7 @@ What's still genuinely blocked, not forgotten:
 2. Query encoders (X-CLIP / CLAP / BGE-M3), always all 4 modalities, encoded concurrently
 3. Weighted RRF fusion (unweighted when decomposition is off - byte-identical to the original)
 4. Window merging (chained, cross-video-safe, bounded)
-5. Query decomposition (`decomposition.py`) - cache → live Gemini (hard-timeout) → deterministic fallback
+5. Query decomposition (`decomposition.py`) - cache → live Groq (hard-timeout) → deterministic fallback
 6. Text-only candidate verification (`verification.py`, `POST /verify`) - separate, non-blocking, three-state, fail-safe
 
 Plus four dedicated hardening/feature passes: a full integration/failure-path audit (Qdrant-down, malformed input, boundary top_k values, schema drift detection), a comprehensive realistic-scenario pass (query variety, video/window variety, concurrency, cold start), a non-LLM code-review pass (concurrent modality search, bounded merge caps, per-candidate modality_evidence, no-silent-mock-fallback, honest `state` field), and this pass (query decomposition + verification, reintroducing an LLM step deliberately architected to avoid the earlier LLM router's timeout problem — see Section 2). A keyword-based query router was built, evaluated, and removed earlier for a real substring-matching bug and a hard vocabulary ceiling (Section 2) and has not been reintroduced; RRF fusion (now optionally weighted by decomposition) still does the work a router would have done. Frame-based/VLM verification remains a documented blocker — see "Known blockers for future work" in Section 8.

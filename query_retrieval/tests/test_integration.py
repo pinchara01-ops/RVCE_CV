@@ -42,7 +42,7 @@ def api_client(monkeypatch):
 
     Query decomposition/verification are explicitly pinned off here: this
     file tests the pre-decomposition retrieval pipeline in isolation, and
-    a real GEMINI_API_KEY being present in query_retrieval/.env must not
+    a real GROQ_API_KEY being present in query_retrieval/.env must not
     silently change these tests' behavior (decomposition defaults on when
     a key is present - see config.py). Decomposition/verification get
     their own dedicated tests in test_decomposition.py/test_verification.py/

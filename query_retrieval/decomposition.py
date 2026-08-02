@@ -1,6 +1,6 @@
 """Query decomposition: break a raw query into per-modality query text and
-RRF weights via Gemini, with a three-tier fallback ladder that is never
-allowed to block /search for long or fail loudly.
+RRF weights via Groq (openai/gpt-oss-20b), with a three-tier fallback
+ladder that is never allowed to block /search for long or fail loudly.
 
 Tier 1 - CACHE: exact match on the raw query string in
 decomposition_cache.json (pre-seeded for demo queries - see
@@ -8,7 +8,7 @@ seed_decomposition_cache.py). Instant, no network call.
 
 Tier 2 - LIVE LLM: only if ENABLE_QUERY_DECOMPOSITION is on and a key is
 configured. Hard-timeout bounded (DECOMPOSITION_TIMEOUT_SECONDS, default
-1.0s - see gemini_client.call_with_hard_timeout) - deliberately tighter
+1.0s - see groq_client.call_with_hard_timeout) - deliberately tighter
 than the old (removed) router's 3s, since decomposition sits directly in
 the /search request path and a demo can't afford to wait on it.
 
@@ -28,7 +28,7 @@ import logging
 import threading
 from pathlib import Path
 
-from query_retrieval import config, gemini_client
+from query_retrieval import config, groq_client
 from query_retrieval.models import DecompositionResult
 
 logger = logging.getLogger(__name__)
@@ -47,14 +47,27 @@ _DECOMPOSITION_PROMPT = """You are a query decomposer for a multimodal video sea
 - speech: spoken words, dialogue, quotes, what someone said
 - caption: generic semantic/scene meaning, events, topics (default catch-all)
 
-Given a user's raw search query, produce a per-modality query string for each of the 4 modalities (rephrase the query to emphasize what that modality would actually search for; if the whole query is already relevant to a modality as-is, you may repeat it unchanged), a list of any required/verifiable conditions implied by the query (short phrases, empty list if none), and a weight per modality (floats summing to 1.0 across the 4, 0.0 for modalities the query has no signal for - a modality can still be searched even at weight 0, so don't omit it).
+Given a user's raw search query, produce a per-modality query string for each of the 4 modalities (rephrase the query to emphasize what that modality would actually search for; if the whole query is already relevant to a modality as-is, you may repeat it unchanged), a list of any required/verifiable conditions implied by the query (short phrases, empty list if none), and a weight per modality.
+
+WEIGHTS ARE THE MOST IMPORTANT PART OF YOUR OUTPUT. You must actually reason about THIS SPECIFIC query and compute real, distinct numbers - never copy the 0.0 placeholders from the shape template below, and never return all-zero or all-equal weights unless the query genuinely has equal signal in every modality. Rules:
+- weights must sum to 1.0 across the modalities that have any signal at all
+- zero out (0.0) any modality the query has no signal for - a modality can still be searched even at weight 0, so don't omit the key, just set it to 0.0
+- the two worked examples below show the kind of real, non-uniform numbers expected - your output must reflect this query's actual content, not the examples' numbers
 
 Respond with ONLY a JSON object, no other text, in exactly this shape:
 {"visual_query": "...", "audio_query": "...", "speech_query": "...", "caption_query": "...", "required_conditions": ["..."], "weights": {"visual": 0.0, "audio": 0.0, "speech": 0.0, "caption": 0.0}}
 
-Example:
+Worked example 1:
+Query: "a dog barking near a fence"
+Output: {"visual_query": "dog near a fence", "audio_query": "dog barking sound", "speech_query": "", "caption_query": "a dog barking near a fence", "required_conditions": ["a dog is barking", "a fence is present"], "weights": {"visual": 0.35, "audio": 0.45, "speech": 0.0, "caption": 0.2}}
+(no spoken words implied at all, so speech is zeroed; audio carries the strongest signal since barking is primarily a sound, visual is close behind since a dog and fence are also directly visible, caption gets a small remainder for generic scene relevance.)
+
+Worked example 2:
 Query: "a person in a red jacket says thank you near a car horn honking"
-{"visual_query": "person wearing a red jacket near a car", "audio_query": "car horn honking", "speech_query": "someone says thank you", "caption_query": "a person in a red jacket says thank you near a car horn honking", "required_conditions": ["person is wearing a red jacket", "a car horn is honking", "someone says thank you"], "weights": {"visual": 0.35, "audio": 0.25, "speech": 0.25, "caption": 0.15}}
+Output: {"visual_query": "person wearing a red jacket near a car", "audio_query": "car horn honking", "speech_query": "someone says thank you", "caption_query": "a person in a red jacket says thank you near a car horn honking", "required_conditions": ["person is wearing a red jacket", "a car horn is honking", "someone says thank you"], "weights": {"visual": 0.35, "audio": 0.25, "speech": 0.25, "caption": 0.15}}
+(here all 4 modalities carry real signal, so all get non-zero, non-uniform weights based on how central each cue is to the query.)
+
+Now decompose this query, following the same reasoning - compute real weights, do not echo placeholders:
 """
 
 
@@ -128,17 +141,13 @@ def _validate_and_build(parsed: dict, query: str) -> DecompositionResult:
 
 
 def _live_decompose(query: str) -> DecompositionResult:
-    client = gemini_client.get_client()
+    client = groq_client.get_client()
 
     def _call() -> str:
-        response = client.models.generate_content(
-            model=config.GEMINI_MODEL,
-            contents=f'{_DECOMPOSITION_PROMPT}\n\nQuery: "{query}"',
-        )
-        return response.text
+        return groq_client.chat_completion(client, f'{_DECOMPOSITION_PROMPT}\n\nQuery: "{query}"')
 
-    raw = gemini_client.call_with_hard_timeout(_call, config.DECOMPOSITION_TIMEOUT_SECONDS)
-    parsed = gemini_client.parse_json_response(raw)
+    raw = groq_client.call_with_hard_timeout(_call, config.DECOMPOSITION_TIMEOUT_SECONDS)
+    parsed = groq_client.parse_json_response(raw)
     return _validate_and_build(parsed, query)
 
 
@@ -154,7 +163,7 @@ def decompose_query(query: str) -> DecompositionResult:
         logger.info("Decomposition tier=fallback query=%r reason=disabled", query)
         return _fallback_result(query)
 
-    if not config.GEMINI_API_KEY:
+    if not config.GROQ_API_KEY:
         logger.info("Decomposition tier=fallback query=%r reason=no_api_key", query)
         return _fallback_result(query)
 

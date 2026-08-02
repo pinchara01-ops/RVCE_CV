@@ -1,12 +1,13 @@
 """One-off/rerunnable script: pre-populate decomposition_cache.json with
-real Gemini decompositions for a curated list of demo queries, so demo-day
-runs of those exact queries hit the cache tier (tier 1) and never touch
-the network - see decomposition.py's three-tier fallback ladder.
+real Groq (openai/gpt-oss-20b) decompositions for a curated list of demo
+queries, so demo-day runs of those exact queries hit the cache tier
+(tier 1) and never touch the network - see decomposition.py's three-tier
+fallback ladder.
 
 Usage:
     python -m query_retrieval.seed_decomposition_cache
 
-Requires a real GEMINI_API_KEY in query_retrieval/.env. Merges into the
+Requires a real GROQ_API_KEY in query_retrieval/.env. Merges into the
 existing cache file rather than overwriting it - safe to rerun after
 adding new queries to DEMO_QUERIES.
 """
@@ -45,8 +46,8 @@ DEMO_QUERIES = [
 
 
 def main() -> None:
-    if not config.GEMINI_API_KEY:
-        raise SystemExit("GEMINI_API_KEY not set in query_retrieval/.env - can't pre-seed live decompositions.")
+    if not config.GROQ_API_KEY:
+        raise SystemExit("GROQ_API_KEY not set in query_retrieval/.env - can't pre-seed live decompositions.")
 
     # DECOMPOSITION_TIMEOUT_SECONDS (1.0s default) is tuned for the live
     # in-request path, where giving up fast matters more than completing
