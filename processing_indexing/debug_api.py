@@ -11,7 +11,14 @@ from .config import Settings
 app = FastAPI(title="Processing Debug API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3017",
+        "http://127.0.0.1:3017",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )

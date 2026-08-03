@@ -171,8 +171,17 @@ class JobManager:
                 job.stage = "cancelled"
                 self._event(job, "cancelled")
                 return
-            job.stage = "complete"
-            job.status = "complete"
+            pipeline_status = job.report.get("status", "failed")
+            if pipeline_status == "failed":
+                job.stage = "failed"
+                job.status = "failed"
+                job.progress = 1.0
+                job.finished_at = time.time()
+                self._write_artifacts(job)
+                self._event(job, "failed", message="Processing pipeline failed")
+                return
+            job.stage = "partial" if pipeline_status == "partial" else "complete"
+            job.status = pipeline_status
             job.progress = 1.0
             job.finished_at = time.time()
             self._write_artifacts(job)
@@ -390,6 +399,10 @@ class JobManager:
                 }
             )
         job.report = report.model_dump(mode="json")
+        job.errors.extend(
+            {"window_id": window_id, "message": message}
+            for window_id, message in report.errors.items()
+        )
         job.report.update(
             {
                 "actual_openai_calls": report.successful_vlm_windows

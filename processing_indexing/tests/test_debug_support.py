@@ -105,3 +105,26 @@ def test_mock_results_are_blocked_from_real_collection(tmp_path):
     manager._run(job)
     assert job.status == "failed"
     assert "debug_ or mock_" in job.errors[0]["message"]
+
+
+def test_inner_pipeline_failure_is_not_reported_as_complete(tmp_path, monkeypatch):
+    manager = JobManager(tmp_path)
+    path = tmp_path / "j" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job("j", path.parent, path, {"vlm_mode": "selection_only"}, {})
+    manager.jobs[job.id] = job
+
+    def fail(inner_job, *_):
+        inner_job.report = {"status": "failed", "errors": {"w": "visual failed"}}
+        inner_job.errors = [{"window_id": "w", "message": "visual failed"}]
+
+    monkeypatch.setattr(manager, "_execute_pipeline", fail)
+    manager._run(job)
+    assert job.status == "failed" and job.stage == "failed"
+    assert (
+        json.loads((job.directory / "exports" / "errors.json").read_text())[0][
+            "window_id"
+        ]
+        == "w"
+    )

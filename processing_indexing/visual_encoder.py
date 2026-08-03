@@ -43,15 +43,25 @@ class XClipVisualEncoder:
                 raise RuntimeError(f"Could not decode frame at {timestamp}s")
             frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         cap.release()
-        inputs = {
-            k: v.to(self.device)
-            for k, v in self._processor(videos=[frames], return_tensors="pt").items()
-        }
+        # XCLIPProcessor treats the temporal frame list as an image batch.
+        # In transformers 4.57, the legacy `videos=` argument is accepted but
+        # silently returns an empty BatchEncoding.
+        inputs = self._processor(images=frames, return_tensors="pt")
+        pixel_values = inputs.get("pixel_values_videos")
+        if pixel_values is None:
+            pixel_values = inputs.get("pixel_values")
+        if pixel_values is None:
+            raise ValueError("X-CLIP processor did not return video pixel values")
+        pixel_values = pixel_values.to(self.device)
         with torch.inference_mode():
+            batch_size, num_frames, channels, height, width = pixel_values.shape
+            flattened = pixel_values.reshape(-1, channels, height, width)
+            vision = self._model.vision_model(pixel_values=flattened, return_dict=True)
+            frame_embeddings = self._model.visual_projection(vision.pooler_output)
+            temporal_input = frame_embeddings.view(batch_size, num_frames, -1)
+            temporal = self._model.mit(temporal_input, return_dict=True)
             vector = (
-                torch.nn.functional.normalize(
-                    self._model.get_video_features(**inputs)[0], dim=0
-                )
+                torch.nn.functional.normalize(temporal.pooler_output[0], dim=0)
                 .cpu()
                 .float()
                 .tolist()

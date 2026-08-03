@@ -5,3 +5,6 @@ __pycache__/
 .env
 qdrant_data/
 processing_jobs/
+.env.processing
+test_assets/debug_processing_video.mp4
+test_assets/debug_processing_speech.wav

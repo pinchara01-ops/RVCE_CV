@@ -43,7 +43,9 @@ class ClapAudioEncoder:
 
             self._processor = AutoProcessor.from_pretrained(self.model_name)
             self._model = (
-                ClapAudioModelWithProjection.from_pretrained(self.model_name)
+                ClapAudioModelWithProjection.from_pretrained(
+                    self.model_name, use_safetensors=True
+                )
                 .to(self.device)
                 .eval()
             )
