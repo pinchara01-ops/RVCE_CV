@@ -150,6 +150,8 @@ class ProcessingPipeline:
             self.settings.window_seconds,
             self.settings.stride_seconds,
         )
+        if self.settings.max_windows is not None:
+            windows = windows[: self.settings.max_windows]
         segments = self.transcriber.transcribe(path, metadata.has_audio)
         self.store.ensure_collection()
         prepared, errors = self._prepare(path, windows, segments, metadata.has_audio)

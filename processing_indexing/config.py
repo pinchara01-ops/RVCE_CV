@@ -30,6 +30,13 @@ class Settings:
     vlm_max_selected_ratio: float = 0.60
     vlm_context_neighbours: int = 1
     vlm_min_direct_confidence: float = 0.50
+    openai_vlm_model: str = "gpt-4.1-mini"
+    openai_api_key: str | None = field(default=None, repr=False)
+    openai_vlm_timeout_seconds: float = 120
+    openai_vlm_retries: int = 2
+    openai_vlm_image_detail: str = "low"
+    openai_vlm_max_frames: int = 4
+    max_windows: int | None = None
 
     def __post_init__(self):
         thresholds = (
@@ -57,6 +64,12 @@ class Settings:
             raise ValueError("VLM_CONTEXT_NEIGHBOURS must be non-negative")
         if not 0 <= self.vlm_min_direct_confidence <= 1:
             raise ValueError("VLM_MIN_DIRECT_CONFIDENCE must be within 0..1")
+        if self.openai_vlm_image_detail not in {"low", "high", "auto"}:
+            raise ValueError("OPENAI_VLM_IMAGE_DETAIL must be low, high, or auto")
+        if self.openai_vlm_max_frames < 1:
+            raise ValueError("OPENAI_VLM_MAX_FRAMES must be at least one")
+        if self.max_windows is not None and self.max_windows < 1:
+            raise ValueError("max_windows must be positive when configured")
 
     @classmethod
     def from_env(cls):
@@ -102,6 +115,14 @@ class Settings:
             vlm_min_direct_confidence=float(
                 os.getenv("VLM_MIN_DIRECT_CONFIDENCE", "0.50")
             ),
+            openai_vlm_model=os.getenv("OPENAI_VLM_MODEL", "gpt-4.1-mini"),
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_vlm_timeout_seconds=float(
+                os.getenv("OPENAI_VLM_TIMEOUT_SECONDS", "120")
+            ),
+            openai_vlm_retries=int(os.getenv("OPENAI_VLM_RETRIES", "2")),
+            openai_vlm_image_detail=os.getenv("OPENAI_VLM_IMAGE_DETAIL", "low"),
+            openai_vlm_max_frames=int(os.getenv("OPENAI_VLM_MAX_FRAMES", "4")),
         )
 
 

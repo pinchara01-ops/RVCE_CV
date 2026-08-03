@@ -165,3 +165,94 @@ class HostedQwenProvider(RetryingVLMProvider):
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
+
+
+class OpenAIVisionProvider:
+    """Official Responses API provider; the SDK client is created only on first call."""
+
+    def __init__(
+        self,
+        api_key,
+        model_name="gpt-4.1-mini",
+        timeout=120,
+        retries=2,
+        image_detail="low",
+        max_frames=4,
+        client=None,
+    ):
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is required for VLM_PROVIDER=openai")
+        self.api_key = api_key
+        self.model_name = model_name
+        self.timeout = timeout
+        self.retries = retries
+        self.image_detail = image_detail
+        self.max_frames = max_frames
+        self._client = client
+        self.last_usage = None
+        self.last_sanitized_request = None
+        self.last_sanitized_response = None
+
+    def _client_instance(self):
+        if self._client is None:
+            from openai import OpenAI
+
+            self._client = OpenAI(
+                api_key=self.api_key, timeout=self.timeout, max_retries=self.retries
+            )
+        return self._client
+
+    def _encode_frames(self, video_path, window):
+        import cv2
+        import numpy as np
+
+        capture = cv2.VideoCapture(str(video_path))
+        frames = []
+        for timestamp in np.linspace(
+            window.start, window.end, self.max_frames, endpoint=False
+        ):
+            capture.set(cv2.CAP_PROP_POS_MSEC, float(timestamp) * 1000)
+            ok, frame = capture.read()
+            if not ok:
+                capture.release()
+                raise VLMError(f"Could not decode OpenAI frame at {timestamp}s")
+            ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if not ok:
+                capture.release()
+                raise VLMError(f"Could not encode OpenAI frame at {timestamp}s")
+            frames.append(
+                (
+                    float(timestamp),
+                    "data:image/jpeg;base64,"
+                    + base64.b64encode(encoded).decode("ascii"),
+                )
+            )
+        capture.release()
+        return frames
+
+    def describe(self, video_path, window):
+        frames = self._encode_frames(video_path, window)
+        content = [{"type": "input_text", "text": PROMPT}]
+        content += [
+            {"type": "input_image", "image_url": data, "detail": self.image_detail}
+            for _, data in frames
+        ]
+        self.last_sanitized_request = {
+            "model": self.model_name,
+            "frame_timestamps": [t for t, _ in frames],
+            "image_detail": self.image_detail,
+            "frame_count": len(frames),
+        }
+        response = self._client_instance().responses.parse(
+            model=self.model_name,
+            input=[{"role": "user", "content": content}],
+            text_format=VLMDescription,
+        )
+        result = response.output_parsed
+        if result is None:
+            raise VLMError(
+                "OpenAI response did not contain validated structured output"
+            )
+        self.last_usage = response.usage.model_dump() if response.usage else None
+        self.last_sanitized_response = result.model_dump()
+        return result

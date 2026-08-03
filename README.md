@@ -33,3 +33,33 @@ Every point retains all four named vectors. Direct captions have `caption_direct
 The query pipeline must give full caption contribution only to direct captions, discount inherited captions, ignore caption vectors when `caption_available=false`, never treat inherited context as proof of a window-specific action, and use the actual candidate clip for final verification.
 
 Run fast tests with `pytest processing_indexing/tests -m "not integration"`. The integration marker is deliberately opt-in and requires a local video, cached real models, and real Qdrant.
+## Processing diagnostics (Next.js + FastAPI)
+
+The temporary diagnostics UI lives in `processing_debug_frontend/`. It talks only to the Python debug API; browser code never imports model code or accepts API keys. Model loading starts only after a user uploads, validates, and explicitly starts a job.
+
+PowerShell setup:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-processing.txt
+Copy-Item .env.processing.example .env.processing
+$env:OPENAI_API_KEY = Read-Host -AsSecureString "OpenAI key" | ConvertFrom-SecureString -AsPlainText
+$env:VLM_PROVIDER = "openai"
+python -m uvicorn processing_indexing.debug_api:app --host 127.0.0.1 --port 8000
+```
+
+In a second PowerShell window:
+
+```powershell
+Set-Location processing_debug_frontend
+npm install
+$env:NEXT_PUBLIC_PROCESSING_API = "http://127.0.0.1:8000"
+npm run dev
+```
+
+Open `http://localhost:3000/processing`. The official OpenAI mode uses `gpt-4.1-mini` by default with the Responses API, up to four temporally ordered low-detail frames. Configure `OPENAI_VLM_MODEL`, `OPENAI_VLM_TIMEOUT_SECONDS`, `OPENAI_VLM_RETRIES`, `OPENAI_VLM_IMAGE_DETAIL`, and `OPENAI_VLM_MAX_FRAMES` server-side. Never put `OPENAI_API_KEY` in a `NEXT_PUBLIC_` variable.
+
+The local production checkpoints are `small` (faster-whisper, corresponding to the Systran faster-whisper small family), `microsoft/xclip-base-patch32`, `laion/clap-htsat-unfused`, `BAAI/bge-m3`, and `Qwen/Qwen2.5-VL-7B-Instruct`. Preflight reports cache presence without loading or downloading them. Selector weights and thresholds are hand-configured heuristics, not learned model weights.
+
+Mock VLM results can be indexed only into collections whose names begin with `debug_` or `mock_`. The four named-vector dimensions remain unchanged.

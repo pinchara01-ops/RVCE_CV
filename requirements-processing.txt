@@ -1,6 +1,10 @@
 pydantic>=2.7,<3
 qdrant-client>=1.10,<2
 httpx>=0.27,<1
+openai>=1.68,<3
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+python-multipart>=0.0.9,<1
 faster-whisper>=1.0,<2
 transformers>=4.45,<5
 sentence-transformers>=3.0,<4

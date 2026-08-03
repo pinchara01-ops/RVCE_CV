@@ -31,7 +31,7 @@ def main():
         from .visual_encoder import XClipVisualEncoder
         from .audio_encoder import ClapAudioEncoder
         from .text_encoder import BgeM3TextEncoder
-        from .vlm import HostedQwenProvider, LocalQwenProvider
+        from .vlm import HostedQwenProvider, LocalQwenProvider, OpenAIVisionProvider
         from .qdrant_store import QdrantStore
         from .pipeline import ProcessingPipeline
 
@@ -58,6 +58,15 @@ def main():
                 model_name=settings.vlm_model,
                 timeout=settings.vlm_timeout_seconds,
                 retries=settings.vlm_retries,
+            )
+        elif settings.vlm_provider == "openai":
+            vlm = OpenAIVisionProvider(
+                api_key=settings.openai_api_key,
+                model_name=settings.openai_vlm_model,
+                timeout=settings.openai_vlm_timeout_seconds,
+                retries=settings.openai_vlm_retries,
+                image_detail=settings.openai_vlm_image_detail,
+                max_frames=settings.openai_vlm_max_frames,
             )
         else:
             raise ValueError(f"Unsupported VLM_PROVIDER: {settings.vlm_provider}")
