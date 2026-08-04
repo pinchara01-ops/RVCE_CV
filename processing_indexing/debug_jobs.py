@@ -102,6 +102,13 @@ class Job:
     report: dict = field(default_factory=dict)
     errors: list[dict] = field(default_factory=list)
     evaluations: dict[str, dict] = field(default_factory=dict)
+    # A browser-supplied provider key exists only for the active in-memory job
+    # run.  ``config`` is deliberately the redacted, user-visible version.
+    private_config: dict = field(default_factory=dict, repr=False)
+
+    def runtime_config(self) -> dict:
+        """Return non-public execution settings without exposing credentials."""
+        return self.private_config or self.config
 
     def public(self):
         return sanitize(
@@ -151,7 +158,14 @@ class JobManager:
         video_id = stable_video_id(path)
         metadata["video_id"] = video_id
         metadata["filename"] = name
-        job = Job(job_id, directory, path, sanitize(config), metadata)
+        job = Job(
+            job_id,
+            directory,
+            path,
+            sanitize(config),
+            metadata,
+            private_config=dict(config),
+        )
         self.jobs[job_id] = job
         self._event(job, "created")
         return job
@@ -200,10 +214,11 @@ class JobManager:
             job.stage = "configuration"
             self._event(job, "started")
             settings = self._settings(job)
-            mode = job.config.get("vlm_mode", "selection_only")
-            if mode not in {"selection_only", "mock", "openai"}:
+            run_config = job.runtime_config()
+            mode = run_config.get("vlm_mode", "selection_only")
+            if mode not in {"selection_only", "mock", "openai", "cosmos"}:
                 raise ValueError("Unsupported VLM mode")
-            if mode == "mock" and job.config.get("index_qdrant"):
+            if mode == "mock" and run_config.get("index_qdrant"):
                 collection = settings.collection_name
                 if not (
                     collection.startswith("debug_") or collection.startswith("mock_")
@@ -263,7 +278,7 @@ class JobManager:
 
     def _settings(self, job):
         base = Settings.from_env()
-        c = job.config
+        c = job.runtime_config()
         return replace(
             base,
             window_seconds=float(c.get("window_seconds", 10)),
@@ -306,7 +321,7 @@ class JobManager:
         from .text_encoder import BgeM3TextEncoder
         from .transcription import FasterWhisperTranscriber
         from .visual_encoder import XClipVisualEncoder
-        from .vlm import OpenAIVisionProvider
+        from .vlm import NvidiaCosmosProvider, OpenAIVisionProvider
 
         class Cancelled(RuntimeError):
             pass
@@ -380,14 +395,17 @@ class JobManager:
         visual = Guard(XClipVisualEncoder(device=settings.device))
         audio = Guard(ClapAudioEncoder(device=settings.device))
         text = Guard(BgeM3TextEncoder(device=settings.device))
+        run_config = job.runtime_config()
+        openai_debug = {}
+        cosmos_debug = {}
         if mode == "openai":
             inner = OpenAIVisionProvider(
-                settings.openai_api_key,
-                settings.openai_vlm_model,
+                run_config.get("openai_api_key") or settings.openai_api_key,
+                run_config.get("openai_model") or settings.openai_vlm_model,
                 settings.openai_vlm_timeout_seconds,
                 settings.openai_vlm_retries,
                 settings.openai_vlm_image_detail,
-                settings.openai_vlm_max_frames,
+                int(run_config.get("openai_max_frames", settings.openai_vlm_max_frames)),
             )
 
             class OpenAIGuard:
@@ -405,19 +423,47 @@ class JobManager:
                             "attempts": list(inner.attempts),
                         }
 
-            openai_debug = {}
             vlm = OpenAIGuard()
+        elif mode == "cosmos":
+            inner = NvidiaCosmosProvider(
+                run_config.get("nvidia_api_key"),
+                run_config.get("cosmos_model", "nvidia/cosmos3-nano-reasoner"),
+                settings.openai_vlm_timeout_seconds,
+                settings.openai_vlm_retries,
+                int(run_config.get("cosmos_max_frames", 8)),
+            )
+
+            class CosmosGuard:
+                def describe(self, *args):
+                    check()
+                    job.stage = "cosmos_vlm"
+                    window = args[1]
+                    try:
+                        return inner.describe(*args)
+                    finally:
+                        cosmos_debug[window.index] = {
+                            "request": inner.last_sanitized_request,
+                            "response": inner.last_sanitized_response,
+                            "usage": inner.last_usage,
+                            "attempts": list(inner.attempts),
+                        }
+
+            vlm = CosmosGuard()
         elif mode == "mock":
             vlm = DebugVLM()
         else:
             vlm = SelectionVLM()
         memory = MemoryStore()
         store = memory
-        if job.config.get("index_qdrant"):
+        if run_config.get("index_qdrant"):
             from qdrant_client import QdrantClient
 
             index_store = QdrantStore(
-                QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key),
+                QdrantClient(
+                    url=settings.qdrant_url,
+                    api_key=settings.qdrant_api_key,
+                    timeout=settings.qdrant_timeout_seconds,
+                ),
                 settings.collection_name,
                 settings.batch_size,
             )
@@ -474,7 +520,7 @@ class JobManager:
                     "has_audio": payload.has_audio,
                     "provenance": provenance,
                     "confidence": payload.caption_confidence,
-                    "indexed": bool(job.config.get("index_qdrant"))
+                    "indexed": bool(run_config.get("index_qdrant"))
                     and payload.window_id not in qdrant_errors,
                     "point_id": deterministic_point_id(payload.window_id),
                     "stored_payload": {
@@ -486,6 +532,9 @@ class JobManager:
                     "cache": {"pipeline": "newly_computed"},
                     "openai": openai_debug.get(int(payload.window_id.rsplit("_", 1)[1]))
                     if mode == "openai"
+                    else None,
+                    "cosmos": cosmos_debug.get(int(payload.window_id.rsplit("_", 1)[1]))
+                    if mode == "cosmos"
                     else None,
                     "errors": (
                         [report.errors[payload.window_id]]
@@ -511,9 +560,17 @@ class JobManager:
                 else summarize_openai_usage({}),
                 "provider_mode": mode,
                 "qdrant_inserted": report.successfully_indexed_windows
-                if job.config.get("index_qdrant")
+                if run_config.get("index_qdrant")
                 else 0,
                 "qdrant_updated": 0,
+                "actual_cosmos_calls": sum(
+                    len(value.get("attempts", [])) for value in cosmos_debug.values()
+                )
+                if mode == "cosmos"
+                else 0,
+                "cosmos_usage": summarize_openai_usage(cosmos_debug)
+                if mode == "cosmos"
+                else summarize_openai_usage({}),
             }
         )
 
@@ -541,6 +598,7 @@ class JobManager:
                 "confidence": x["confidence"],
                 "vlm_call_state": x["vlm_call_state"],
                 "openai": x.get("openai"),
+                "cosmos": x.get("cosmos"),
                 "errors": x["errors"],
             }
             for x in job.windows

@@ -3,6 +3,7 @@ api.py correctly: a weight-0 modality is still searched (never skipped),
 decomposition weights actually flow into fused scores through the real
 /search endpoint, and /verify never adds latency to /search.
 """
+import threading
 import time
 
 import pytest
@@ -28,10 +29,12 @@ def decomposition_client(monkeypatch):
         yield c
 
 
-def test_weight_zero_modality_is_still_searched_not_skipped(monkeypatch, decomposition_client):
-    """A modality decomposition weights at 0.0 must still be encoded and
-    searched - the weight only applies in fusion scoring, never as a
-    search-skip gate (Part A.3)."""
+def test_weight_zero_modality_is_not_searched(monkeypatch, decomposition_client):
+    """A decomposition now avoids needless zero-weight retrieval work.
+
+    The deterministic fallback keeps all four weights non-zero, so this only
+    applies when the decomposer positively marks a modality irrelevant.
+    """
     decomposition_result = DecompositionResult(
         visual_query="a red car", audio_query="a red car", speech_query="a red car", caption_query="a red car",
         required_conditions=[], weights={"visual": 1.0, "audio": 0.0, "speech": 0.0, "caption": 0.0}, tier="live",
@@ -54,8 +57,74 @@ def test_weight_zero_modality_is_still_searched_not_skipped(monkeypatch, decompo
     resp = decomposition_client.post("/search", json={"query": "a red car", "top_k": 10})
 
     assert resp.status_code == 200
-    # Every modality was actually called, including the three weighted at 0.0.
-    assert calls == {"visual": 1, "audio": 1, "speech": 1, "caption": 1}
+    assert calls == {"visual": 1, "audio": 0, "speech": 0, "caption": 0}
+
+
+def test_local_qdrant_searches_are_serialized(monkeypatch, decomposition_client):
+    """Avoid a four-request fan-out burst against a local Qdrant process."""
+    monkeypatch.setattr(config, "ENABLE_QUERY_DECOMPOSITION", False)
+    monkeypatch.setattr(
+        encoders,
+        "encode_query",
+        lambda query: {modality: [0.0] * 4 for modality in config.VECTOR_NAMES},
+    )
+    active = 0
+    max_active = 0
+    calls = []
+    lock = threading.Lock()
+
+    def _search(modality):
+        def _fn(vector, top_k):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+                calls.append(modality)
+            time.sleep(0.01)
+            with lock:
+                active -= 1
+            return []
+
+        return _fn
+
+    monkeypatch.setattr(
+        api,
+        "_SEARCH_FNS",
+        {modality: _search(modality) for modality in config.VECTOR_NAMES},
+    )
+
+    response = decomposition_client.post("/search", json={"query": "test"})
+
+    assert response.status_code == 200
+    assert calls == ["visual", "audio", "speech", "caption"]
+    assert max_active == 1
+
+
+def test_low_memory_mode_uses_eviction_encoder_without_eager_warmup(
+    monkeypatch, decomposition_client
+):
+    monkeypatch.setattr(config, "QUERY_LOW_MEMORY_MODE", True)
+    monkeypatch.setattr(config, "ENABLE_QUERY_DECOMPOSITION", False)
+    monkeypatch.setattr(api, "_encoders_ready", False)
+    monkeypatch.setattr(
+        encoders,
+        "warmup",
+        lambda: (_ for _ in ()).throw(AssertionError("low-memory mode must not warm all models")),
+    )
+    monkeypatch.setattr(
+        encoders,
+        "encode_query_low_memory",
+        lambda query: {modality: [0.0] * 4 for modality in config.VECTOR_NAMES},
+    )
+    monkeypatch.setattr(
+        api,
+        "_SEARCH_FNS",
+        {modality: (lambda vector, top_k: []) for modality in config.VECTOR_NAMES},
+    )
+
+    response = decomposition_client.post("/search", json={"query": "test"})
+
+    assert response.status_code == 200
 
 
 def test_decomposition_weights_flow_into_fused_scores(monkeypatch, decomposition_client):

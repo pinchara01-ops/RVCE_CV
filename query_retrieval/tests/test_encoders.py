@@ -146,6 +146,20 @@ def test_encode_query_partial_failure_drops_only_failing_modality():
     _assert_valid_vector(result["visual"], dims["visual"])
 
 
+def test_low_memory_encoding_evicts_models_after_all_modalities():
+    dims = _dims()
+    with patch.object(encoders, "_load_xclip", return_value=(_FakeTextModel(dims["visual"]), _FakeTokenizer())) as xclip, \
+         patch.object(encoders, "_load_clap", return_value=(_FakeTextModel(dims["audio"]), _FakeTokenizer())) as clap, \
+         patch.object(encoders, "_load_bge_m3", return_value=(_FakeSentenceTransformer(dims["speech"]), None)) as bge:
+        result = encoders.encode_query_low_memory("person in a red jacket")
+
+    assert set(result) == {"visual", "audio", "speech", "caption"}
+    assert encoders._model_cache == {}
+    xclip.assert_called_once()
+    clap.assert_called_once()
+    bge.assert_called_once()
+
+
 def test_warmup_loads_all_three_models_once():
     dims = _dims()
     with patch.object(encoders, "_load_xclip", return_value=(_FakeTextModel(dims["visual"]), _FakeTokenizer())) as m1, \

@@ -177,11 +177,8 @@ def test_zero_matches_returns_empty_results_cleanly(api_client, monkeypatch):
 # --- 2b. concurrency correctness ---
 
 
-def test_concurrent_modality_search_does_not_mix_up_modality_results(api_client, monkeypatch):
-    """The 4 Qdrant searches now run in a thread pool (concurrency change) -
-    assert each modality's result in the final response still traces back
-    to that modality's own search function, not a different thread's
-    result swapped in under the wrong key."""
+def test_modality_search_does_not_mix_up_modality_results(api_client, monkeypatch):
+    """Each modality's result must trace back to its own search function."""
 
     def _make_fn(modality):
         # Distinct video_id per modality so merge_windows() (which merges

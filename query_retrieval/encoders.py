@@ -11,6 +11,7 @@ speech and caption both use BGE-M3 - this is intentional per contract
 one model instance, two thin wrapper functions.
 """
 import logging
+import gc
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -29,6 +30,9 @@ _model_cache: dict[str, tuple] = {}
 # isn't documented as thread-safe, so serialize just that shared model.
 # X-CLIP and CLAP each have their own instance and don't need this.
 _bge_m3_lock = threading.Lock()
+# Low-memory search loads one encoder at a time and must not let concurrent
+# HTTP requests evict a model that another request is actively using.
+_low_memory_encode_lock = threading.Lock()
 
 # Reused across requests rather than a per-call `with ThreadPoolExecutor()`
 # to avoid paying thread-spawn cost on every query.
@@ -79,6 +83,26 @@ def _get(name: str, loader: Callable[[], tuple]) -> tuple:
     if name not in _model_cache:
         _model_cache[name] = loader()
     return _model_cache[name]
+
+
+def _release(name: str) -> None:
+    """Drop a locally loaded encoder so Docker/Qdrant keeps enough RAM.
+
+    Model files remain in Hugging Face's on-disk cache; this only evicts the
+    Python model instance.  CUDA cache release is harmless on CPU-only runs.
+    """
+    model = _model_cache.pop(name, None)
+    if model is None:
+        return
+    del model
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # pragma: no cover - cleanup must never break search
+        pass
 
 
 def encode_visual_text(query: str) -> list[float]:
@@ -190,14 +214,65 @@ def encode_query(query: str) -> dict[str, list[float]]:
     return _encode_many({modality: query for modality in _ENCODERS})
 
 
+def _encode_low_memory(queries: dict[str, str]) -> dict[str, list[float]]:
+    """Encode all requested modalities without keeping all models resident."""
+    with _low_memory_encode_lock:
+        vectors: dict[str, list[float]] = {}
+        for modality, cache_key, encoder in (
+            ("visual", "xclip", encode_visual_text),
+            ("audio", "clap", encode_audio_text),
+        ):
+            if modality not in queries:
+                continue
+            try:
+                value = _safe_encode(modality, encoder, queries[modality])
+                if value is not None:
+                    vectors[modality] = value
+            finally:
+                _release(cache_key)
+
+        # Speech and caption use the same BGE-M3 instance.  Keep it only for
+        # the two adjacent encodes, then release it before Qdrant retrieval.
+        try:
+            for modality, encoder in (
+                ("speech", encode_speech_text),
+                ("caption", encode_caption_text),
+            ):
+                if modality not in queries:
+                    continue
+                value = _safe_encode(modality, encoder, queries[modality])
+                if value is not None:
+                    vectors[modality] = value
+        finally:
+            _release("bge_m3")
+        return vectors
+
+
+def encode_query_low_memory(query: str) -> dict[str, list[float]]:
+    """Four-modality query encoding for constrained local machines."""
+    return _encode_low_memory({modality: query for modality in _ENCODERS})
+
+
 def encode_decomposed(decomposition: DecompositionResult) -> dict[str, list[float]]:
     """Encode each modality's decomposition-specific query text with its
     own encoder, concurrently - used when query decomposition is enabled.
-    Even a modality decomposition.py assigned weight 0.0 still gets
-    encoded and searched here; the weight is applied later, purely in
-    fusion, never as a search-skip gate (see decomposition.py, fusion.py).
+    Zero-weight modalities may still be encoded so a malformed live
+    decomposition can fall back safely, but api.py deliberately skips their
+    Qdrant searches when at least one modality has a positive weight.
     """
     return _encode_many({
+        "visual": decomposition.visual_query,
+        "audio": decomposition.audio_query,
+        "speech": decomposition.speech_query,
+        "caption": decomposition.caption_query,
+    })
+
+
+def encode_decomposed_low_memory(
+    decomposition: DecompositionResult,
+) -> dict[str, list[float]]:
+    """Low-memory counterpart to ``encode_decomposed``."""
+    return _encode_low_memory({
         "visual": decomposition.visual_query,
         "audio": decomposition.audio_query,
         "speech": decomposition.speech_query,

@@ -89,6 +89,49 @@ export type IndexedVideo = {
   caption_available: number;
 };
 
+export type SearchModality = "visual" | "audio" | "speech" | "caption";
+
+export type VerificationProvider = "none" | "openai" | "cosmos";
+
+export type SearchVerificationRequest = {
+  provider: VerificationProvider;
+  /** Sent only with the current request. The UI never persists this value. */
+  api_key?: string;
+};
+
+export type SearchRequest = {
+  query: string;
+  top_k?: number;
+  enable_decomposition?: boolean;
+  verification?: SearchVerificationRequest;
+};
+
+export type SearchDecomposition = {
+  tier?: string;
+  weights?: Partial<Record<SearchModality, number>>;
+  required_conditions?: string[];
+  visual_query?: string;
+  audio_query?: string;
+  speech_query?: string;
+  caption_query?: string;
+};
+
+export type SearchVerification = {
+  state?: string;
+  confidence?: number | null;
+  evidence?: string;
+  reason?: string;
+  satisfied_conditions?: string[];
+  missing_conditions?: string[];
+  contradictions?: string[];
+  matched_conditions?: string[];
+  final_score?: number | null;
+  refined_start?: number | null;
+  refined_end?: number | null;
+  refined_start_seconds?: number | null;
+  refined_end_seconds?: number | null;
+};
+
 export type SearchResult = {
   video_id: string;
   window_id: string;
@@ -97,10 +140,35 @@ export type SearchResult = {
   transcript: string;
   caption: string;
   score: number;
-  matched_modalities: string[];
-  modality_evidence: { modality: string; rank: number; contribution: number }[];
-  state: string;
+  matched_modalities?: string[];
+  modality_evidence?: { modality: string; rank: number; contribution: number }[];
+  state?: string;
   media_available: boolean;
+  retrieval_score?: number | null;
+  final_score?: number | null;
+  confidence?: number | null;
+  evidence?: string;
+  verification_state?: string;
+  verification_confidence?: number | null;
+  verification_evidence?: string;
+  verification_reason?: string;
+  verification?: SearchVerification | null;
+  verification_result?: SearchVerification | null;
+  refined_start?: number | null;
+  refined_end?: number | null;
+  refined_start_seconds?: number | null;
+  refined_end_seconds?: number | null;
+  satisfied_conditions?: string[];
+  missing_conditions?: string[];
+  contradictions?: string[];
+  matched_conditions?: string[];
+};
+
+export type SearchResponse = {
+  results: SearchResult[];
+  /** `query_decomposition` is accepted during the backend transition. */
+  decomposition?: SearchDecomposition | null;
+  query_decomposition?: SearchDecomposition | null;
 };
 
 export async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {

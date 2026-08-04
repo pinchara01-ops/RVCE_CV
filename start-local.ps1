@@ -9,6 +9,7 @@ $Root = $PSScriptRoot
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $Frontend = Join-Path $Root "processing_debug_frontend"
 $ModelCache = Join-Path $Root ".model-cache"
+$UploadTemp = Join-Path $Root ".tmp\uploads"
 
 function Test-LocalUrl {
     param([Parameter(Mandatory)][string]$Url)
@@ -97,12 +98,17 @@ if (-not (Test-LocalUrl "http://127.0.0.1:8000/api/index/health")) {
     $EscapedRoot = $Root.Replace("'", "''")
     $EscapedPython = $Python.Replace("'", "''")
     $EscapedModelCache = $ModelCache.Replace("'", "''")
+    $EscapedUploadTemp = $UploadTemp.Replace("'", "''")
     $BackendScript = @"
 Set-Location -LiteralPath '$EscapedRoot'
+New-Item -ItemType Directory -Force -Path '$EscapedUploadTemp' | Out-Null
 `$env:HF_HOME = '$EscapedModelCache'
+`$env:TEMP = '$EscapedUploadTemp'
+`$env:TMP = '$EscapedUploadTemp'
 `$env:OPENBLAS_NUM_THREADS = '1'
 `$env:OMP_NUM_THREADS = '1'
 `$env:PYTHONPATH = ''
+`$env:QUERY_LOW_MEMORY_MODE = '1'
 & '$EscapedPython' -m uvicorn processing_indexing.debug_api:app --host 127.0.0.1 --port 8000
 "@
     Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", (ConvertTo-EncodedPowerShell $BackendScript)) -WindowStyle Hidden

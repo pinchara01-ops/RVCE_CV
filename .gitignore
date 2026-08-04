@@ -25,6 +25,9 @@ qdrant_data/
 processing_jobs/
 test_assets/debug_processing_video.mp4
 test_assets/debug_processing_speech.wav
+# Downloaded evaluation videos stay local; keep their manifest and README trackable.
+test_assets/asset_library/media/
+test_assets/asset_library/*.log
 
 # Node build output
 frontend/node_modules/
