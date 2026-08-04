@@ -98,8 +98,10 @@ def _failure_category(exc):
         return "schema_validation"
     name = type(exc).__name__.lower()
     status = getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        status = getattr(getattr(exc, "response", None), "status_code", None)
     if any(value in name for value in ("timeout", "connection", "ratelimit")) or (
-        isinstance(status, int) and status >= 500
+        isinstance(status, int) and (status == 429 or status >= 500)
     ):
         return "transport"
     return "provider_error"
@@ -265,6 +267,241 @@ class HostedQwenProvider(RetryingVLMProvider):
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
+
+
+NVIDIA_COSMOS_CHAT_COMPLETIONS_URL = (
+    "https://integrate.api.nvidia.com/v1/chat/completions"
+)
+NVIDIA_COSMOS_NANO_MODEL = "nvidia/cosmos3-nano-reasoner"
+
+
+def _chat_completion_usage(payload):
+    """Normalize usage returned by OpenAI-compatible chat-completion APIs."""
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    normalized = dict(usage)
+    if "prompt_tokens" in normalized:
+        normalized.setdefault("input_tokens", normalized["prompt_tokens"])
+    if "completion_tokens" in normalized:
+        normalized.setdefault("output_tokens", normalized["completion_tokens"])
+    return normalized
+
+
+class NvidiaCosmosProvider:
+    """Hosted NVIDIA Cosmos 3 provider using temporal frame inputs.
+
+    The caller supplies a per-job API key. This provider keeps that key only in
+    memory and deliberately excludes it, prompts, and frame payloads from the
+    diagnostics exposed to the rest of the indexing pipeline.
+    """
+
+    def __init__(
+        self,
+        api_key,
+        model_name=NVIDIA_COSMOS_NANO_MODEL,
+        timeout=120,
+        retries=2,
+        max_frames=8,
+        client=None,
+        clock=time.monotonic,
+    ):
+        if not api_key:
+            raise ValueError("An NVIDIA API key is required for Cosmos VLM")
+        if not model_name:
+            raise ValueError("A Cosmos model name is required")
+        if timeout <= 0:
+            raise ValueError("Cosmos timeout must be positive")
+        if retries < 0:
+            raise ValueError("Cosmos retries cannot be negative")
+        if max_frames < 1:
+            raise ValueError("Cosmos max_frames must be at least one")
+
+        import httpx
+
+        self.api_key = api_key
+        self.model_name = model_name
+        self.timeout = timeout
+        self.retries = retries
+        self.max_frames = max_frames
+        self.client = client or httpx.Client(timeout=timeout)
+        self._clock = clock
+        self.last_usage = None
+        self.last_sanitized_request = None
+        self.last_sanitized_response = None
+        self.attempts = []
+
+    def _encode_frames(self, video_path, window):
+        import cv2
+        import numpy as np
+
+        capture = cv2.VideoCapture(str(video_path))
+        if not capture.isOpened():
+            capture.release()
+            raise VLMError(f"Could not open video for Cosmos VLM: {video_path}")
+
+        frames = []
+        try:
+            for timestamp in np.linspace(
+                window.start, window.end, self.max_frames, endpoint=False
+            ):
+                capture.set(cv2.CAP_PROP_POS_MSEC, float(timestamp) * 1000)
+                ok, frame = capture.read()
+                if not ok:
+                    raise VLMError(f"Could not decode Cosmos frame at {timestamp}s")
+                ok, encoded = cv2.imencode(
+                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90]
+                )
+                if not ok:
+                    raise VLMError(f"Could not encode Cosmos frame at {timestamp}s")
+                frames.append(
+                    (
+                        float(timestamp),
+                        "data:image/jpeg;base64,"
+                        + base64.b64encode(encoded).decode("ascii"),
+                    )
+                )
+        finally:
+            capture.release()
+        return frames
+
+    def _request_payload(self, frames):
+        return {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video_frames",
+                            "video_frames": [data for _, data in frames],
+                        },
+                        {"type": "text", "text": PROMPT},
+                    ],
+                }
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "VLMDescription",
+                    "schema": VLMDescription.model_json_schema(),
+                },
+            },
+            "temperature": 0,
+            "max_tokens": 1024,
+            "stream": False,
+        }
+
+    def describe(self, video_path, window):
+        self.last_usage = None
+        self.last_sanitized_request = None
+        self.last_sanitized_response = None
+        self.attempts = []
+
+        frames = self._encode_frames(video_path, window)
+        payload = self._request_payload(frames)
+        self.last_sanitized_request = {
+            "endpoint": NVIDIA_COSMOS_CHAT_COMPLETIONS_URL,
+            "model": self.model_name,
+            "frame_timestamps": [timestamp for timestamp, _ in frames],
+            "frame_count": len(frames),
+            "response_format": "json_schema",
+        }
+
+        last = None
+        for attempt in range(1, self.retries + 2):
+            started = self._clock()
+            response_payload = None
+            try:
+                response = self.client.post(
+                    NVIDIA_COSMOS_CHAT_COMPLETIONS_URL,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                response.raise_for_status()
+                response_payload = response.json()
+                usage = _chat_completion_usage(response_payload)
+                if usage is not None:
+                    self.last_usage = usage
+
+                try:
+                    message = response_payload["choices"][0]["message"]
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise StructuredOutputError(
+                        "NVIDIA Cosmos response did not contain a chat message"
+                    ) from exc
+                if message.get("refusal"):
+                    raise VLMRefusalError("NVIDIA Cosmos refused the visual request")
+                raw = message.get("content")
+                if not isinstance(raw, str) or not raw.strip():
+                    raise StructuredOutputError(
+                        "NVIDIA Cosmos response did not contain structured JSON"
+                    )
+
+                result = VLMDescription.model_validate_json(raw)
+                timing_diagnostics = normalize_action_timings(
+                    result, window.end - window.start
+                )
+                self.last_sanitized_response = {
+                    **result.model_dump(),
+                    "timing_diagnostics": timing_diagnostics,
+                }
+                self.attempts.append(
+                    {
+                        "attempt": attempt,
+                        "status": "succeeded",
+                        "failure_category": None,
+                        "error": None,
+                        "model": self.model_name,
+                        "duration_seconds": self._clock() - started,
+                        "usage_status": "captured"
+                        if usage is not None
+                        else "unavailable",
+                        "usage": usage,
+                        "timing_diagnostics": timing_diagnostics,
+                    }
+                )
+                return result
+            except Exception as exc:
+                last = exc
+                category = _failure_category(exc)
+                usage = _chat_completion_usage(response_payload) or _usage(exc)
+                if usage is not None:
+                    self.last_usage = usage
+                self.attempts.append(
+                    {
+                        "attempt": attempt,
+                        "status": "failed",
+                        "failure_category": category,
+                        "error": _safe_error(exc),
+                        "model": self.model_name,
+                        "duration_seconds": self._clock() - started,
+                        "usage_status": "captured"
+                        if usage is not None
+                        else "unavailable",
+                        "usage": usage,
+                        "timing_diagnostics": [],
+                    }
+                )
+                retryable = category in {
+                    "truncated_json",
+                    "schema_validation",
+                    "missing_parsed_output",
+                    "transport",
+                }
+                if not retryable or attempt > self.retries:
+                    break
+
+        if isinstance(last, VLMRefusalError):
+            raise last
+        raise VLMError(
+            f"NVIDIA Cosmos structured response failed after {len(self.attempts)} "
+            f"attempts: {_safe_error(last)}"
+        ) from last
 
 
 class OpenAIVisionProvider:

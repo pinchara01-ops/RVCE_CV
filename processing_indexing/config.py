@@ -1,5 +1,15 @@
 from dataclasses import dataclass, field
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+# Keep local configuration optional and explicit.  Real environment values
+# remain authoritative because load_dotenv never overrides them by default.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(_PROJECT_ROOT / ".env.processing")
+load_dotenv(_PROJECT_ROOT / ".env")
 
 
 @dataclass(frozen=True)
@@ -8,6 +18,7 @@ class Settings:
     stride_seconds: float = 5.0
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
+    qdrant_timeout_seconds: float = 10.0
     collection_name: str = "video_windows"
     device: str = "cpu"
     batch_size: int = 8
@@ -39,6 +50,8 @@ class Settings:
     max_windows: int | None = None
 
     def __post_init__(self):
+        if self.qdrant_timeout_seconds <= 0:
+            raise ValueError("QDRANT_TIMEOUT_SECONDS must be positive")
         thresholds = (
             self.vlm_visual_change_threshold,
             self.vlm_audio_change_threshold,
@@ -78,6 +91,7 @@ class Settings:
             stride_seconds=float(os.getenv("STRIDE_SECONDS", "5")),
             qdrant_url=os.getenv("QDRANT_URL", "http://localhost:6333"),
             qdrant_api_key=os.getenv("QDRANT_API_KEY"),
+            qdrant_timeout_seconds=float(os.getenv("QDRANT_TIMEOUT_SECONDS", "10")),
             collection_name=os.getenv("COLLECTION_NAME", "video_windows"),
             device=os.getenv("DEVICE", "cpu"),
             batch_size=int(os.getenv("BATCH_SIZE", "8")),

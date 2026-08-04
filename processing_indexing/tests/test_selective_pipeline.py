@@ -49,6 +49,13 @@ class RecordingVLM:
         )
 
 
+class DisabledVLM:
+    disabled = True
+
+    def describe(self, path, window):
+        raise AssertionError("Selection-only mode must not invoke a VLM")
+
+
 def pipeline(tmp_path, monkeypatch, duration=30, vlm=None, visual=None, settings=None):
     path = tmp_path / "video.mp4"
     path.write_bytes(b"real identity input")
@@ -80,6 +87,21 @@ def test_two_pass_pipeline_calls_only_selected_windows_and_preserves_all_points(
     assert report.selected_vlm_windows == 2
     assert report.estimated_calls_saved == 3
     assert report.selected_ratio == 0.4
+
+
+def test_disabled_vlm_marks_windows_as_unavailable_without_fake_calls(
+    tmp_path, monkeypatch
+):
+    report, store, _ = pipeline(tmp_path, monkeypatch, vlm=DisabledVLM())
+
+    assert report.vlm_successes == 0
+    assert report.selected_vlm_windows == 0
+    assert report.unavailable_caption_windows == report.total_windows
+    for payload, _ in store.points.values():
+        assert not payload.vlm_processed
+        assert not payload.caption_direct
+        assert not payload.caption_available
+        assert payload.vlm_call_state == "unavailable"
 
 
 def test_direct_inherited_and_unavailable_payloads_are_distinct(tmp_path, monkeypatch):

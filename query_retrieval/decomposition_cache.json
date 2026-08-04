@@ -1,0 +1,321 @@
+{
+  "a birthday party": {
+    "audio_query": "birthday party music and laughter",
+    "caption_query": "a birthday party",
+    "required_conditions": [
+      "birthday party"
+    ],
+    "speech_query": "people singing happy birthday",
+    "visual_query": "people at a birthday party with cake and decorations",
+    "weights": {
+      "audio": 0.2,
+      "caption": 0.4,
+      "speech": 0.2,
+      "visual": 0.2
+    }
+  },
+  "a celebration": {
+    "audio_query": "celebration sounds, music, cheers, applause, fireworks",
+    "caption_query": "celebration event",
+    "required_conditions": [
+      "celebration event",
+      "people celebrating"
+    ],
+    "speech_query": "people saying congratulations, cheers, happy",
+    "visual_query": "people celebrating, confetti, fireworks, party",
+    "weights": {
+      "audio": 0.25,
+      "caption": 0.15,
+      "speech": 0.2,
+      "visual": 0.4
+    }
+  },
+  "a dog barking near a fence": {
+    "audio_query": "dog barking sound",
+    "caption_query": "a dog barking near a fence",
+    "required_conditions": [
+      "a dog is barking",
+      "a fence is present"
+    ],
+    "speech_query": "",
+    "visual_query": "dog near a fence",
+    "weights": {
+      "audio": 0.45,
+      "caption": 0.2,
+      "speech": 0.0,
+      "visual": 0.35
+    }
+  },
+  "a package being delivered at the entrance": {
+    "audio_query": "",
+    "caption_query": "a package being delivered at the entrance",
+    "required_conditions": [
+      "a package is present",
+      "package is being delivered",
+      "entrance is present"
+    ],
+    "speech_query": "",
+    "visual_query": "package at entrance",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.3,
+      "speech": 0.0,
+      "visual": 0.7
+    }
+  },
+  "a person in a dark jacket pauses near a side entrance": {
+    "audio_query": "",
+    "caption_query": "a person in a dark jacket pauses near a side entrance",
+    "required_conditions": [
+      "person is wearing a dark jacket",
+      "person is near a side entrance",
+      "person pauses"
+    ],
+    "speech_query": "",
+    "visual_query": "person in dark jacket near side entrance pausing",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.4,
+      "speech": 0.0,
+      "visual": 0.6
+    }
+  },
+  "a person in a red jacket near the door": {
+    "audio_query": "",
+    "caption_query": "a person in a red jacket near the door",
+    "required_conditions": [
+      "person is wearing a red jacket",
+      "person is near a door",
+      "door is present"
+    ],
+    "speech_query": "",
+    "visual_query": "person wearing a red jacket near a door",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.25,
+      "speech": 0.0,
+      "visual": 0.75
+    }
+  },
+  "an explosion sound in the distance": {
+    "audio_query": "distant explosion sound",
+    "caption_query": "an explosion sound in the distance",
+    "required_conditions": [
+      "explosion sound present",
+      "explosion is in the distance"
+    ],
+    "speech_query": "",
+    "visual_query": "explosion in the distance",
+    "weights": {
+      "audio": 0.6,
+      "caption": 0.15,
+      "speech": 0.0,
+      "visual": 0.25
+    }
+  },
+  "an outdoor scene": {
+    "audio_query": "outdoor ambient sounds",
+    "caption_query": "outdoor scene",
+    "required_conditions": [
+      "scene is outdoors"
+    ],
+    "speech_query": "",
+    "visual_query": "outdoor scene",
+    "weights": {
+      "audio": 0.15,
+      "caption": 0.4,
+      "speech": 0.0,
+      "visual": 0.45
+    }
+  },
+  "dog barking": {
+    "audio_query": "dog barking sound",
+    "caption_query": "dog barking",
+    "required_conditions": [
+      "dog is barking"
+    ],
+    "speech_query": "",
+    "visual_query": "dog barking",
+    "weights": {
+      "audio": 0.55,
+      "caption": 0.1,
+      "speech": 0.0,
+      "visual": 0.35
+    }
+  },
+  "glass breaking": {
+    "audio_query": "glass breaking sound",
+    "caption_query": "glass breaking",
+    "required_conditions": [
+      "glass is breaking"
+    ],
+    "speech_query": "",
+    "visual_query": "glass breaking",
+    "weights": {
+      "audio": 0.4,
+      "caption": 0.2,
+      "speech": 0.0,
+      "visual": 0.4
+    }
+  },
+  "loud crash sound": {
+    "audio_query": "loud crash sound",
+    "caption_query": "loud crash sound",
+    "required_conditions": [
+      "loud crash sound present"
+    ],
+    "speech_query": "",
+    "visual_query": "crash",
+    "weights": {
+      "audio": 0.65,
+      "caption": 0.2,
+      "speech": 0.0,
+      "visual": 0.15
+    }
+  },
+  "man shouting while driving": {
+    "audio_query": "",
+    "caption_query": "man shouting while driving",
+    "required_conditions": [
+      "man is driving",
+      "man is shouting"
+    ],
+    "speech_query": "man shouting",
+    "visual_query": "man driving a car",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.2,
+      "speech": 0.45,
+      "visual": 0.35
+    }
+  },
+  "person mentions their name": {
+    "audio_query": "voice sound",
+    "caption_query": "person mentions their name",
+    "required_conditions": [
+      "person is speaking",
+      "person says their name"
+    ],
+    "speech_query": "mentions their name",
+    "visual_query": "person speaking",
+    "weights": {
+      "audio": 0.2,
+      "caption": 0.1,
+      "speech": 0.5,
+      "visual": 0.2
+    }
+  },
+  "person mentions their name and address": {
+    "audio_query": "speech audio of person",
+    "caption_query": "person mentions name and address",
+    "required_conditions": [
+      "person mentions their name",
+      "person mentions their address",
+      "person is speaking"
+    ],
+    "speech_query": "person says their name and address",
+    "visual_query": "person speaking on screen",
+    "weights": {
+      "audio": 0.2,
+      "caption": 0.1,
+      "speech": 0.55,
+      "visual": 0.15
+    }
+  },
+  "person wearing glasses": {
+    "audio_query": "",
+    "caption_query": "person wearing glasses",
+    "required_conditions": [
+      "person is wearing glasses"
+    ],
+    "speech_query": "",
+    "visual_query": "person wearing glasses",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.15,
+      "speech": 0.0,
+      "visual": 0.85
+    }
+  },
+  "quiet room": {
+    "audio_query": "quiet",
+    "caption_query": "quiet room",
+    "required_conditions": [
+      "room is quiet"
+    ],
+    "speech_query": "",
+    "visual_query": "room",
+    "weights": {
+      "audio": 0.55,
+      "caption": 0.2,
+      "speech": 0.0,
+      "visual": 0.25
+    }
+  },
+  "red car": {
+    "audio_query": "",
+    "caption_query": "red car",
+    "required_conditions": [
+      "car is red",
+      "car present"
+    ],
+    "speech_query": "",
+    "visual_query": "red car",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.3,
+      "speech": 0.0,
+      "visual": 0.7
+    }
+  },
+  "someone says hello": {
+    "audio_query": "",
+    "caption_query": "someone says hello",
+    "required_conditions": [
+      "someone is speaking",
+      "someone says hello"
+    ],
+    "speech_query": "hello",
+    "visual_query": "person saying hello",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.15,
+      "speech": 0.7,
+      "visual": 0.15
+    }
+  },
+  "someone stole the milk from the fridge": {
+    "audio_query": "",
+    "caption_query": "someone stole the milk from the fridge",
+    "required_conditions": [
+      "someone stole milk",
+      "milk was in fridge",
+      "someone was present"
+    ],
+    "speech_query": "",
+    "visual_query": "person stealing milk from fridge",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.25,
+      "speech": 0.0,
+      "visual": 0.75
+    }
+  },
+  "two people talking in a lobby": {
+    "audio_query": "",
+    "caption_query": "two people talking in a lobby",
+    "required_conditions": [
+      "two people present",
+      "people are talking",
+      "lobby present"
+    ],
+    "speech_query": "people talking",
+    "visual_query": "two people in a lobby",
+    "weights": {
+      "audio": 0.0,
+      "caption": 0.15,
+      "speech": 0.5,
+      "visual": 0.35
+    }
+  }
+}

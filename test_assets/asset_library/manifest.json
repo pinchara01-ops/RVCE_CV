@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-08-05",
+  "purpose": "Local evaluation and demo assets for the video indexing and retrieval UI.",
+  "assets": [
+    {
+      "id": "ga-paulding-vehicle-burglary-dashcam-20m",
+      "title": "Paulding County Deputy Michael McMaster dashcam — local 20 minute extract",
+      "country": "United States",
+      "location": "Paulding County, Georgia",
+      "media_type": "police dashcam / crime-response footage",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Paulding_County_Deputy_Michael_McMaster_slams_Tyler_Lee_Canaris_to_the_Ground.webm",
+      "source_author": "Paulding County Sheriff's Office",
+      "source_duration_seconds": 3255.011,
+      "local_duration_seconds": 1200,
+      "local_size_bytes": 648901659,
+      "sha256": "F0998DF9F00BAF1CA7E2EF44E4FEE3C256BB91139444D90BFC8D79C83192F766",
+      "license": "Public domain in the United States as a Georgia public record (as documented by Wikimedia Commons)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:Paulding_County_Deputy_Michael_McMaster_slams_Tyler_Lee_Canaris_to_the_Ground.webm#Licensing",
+      "attribution": "Paulding County Sheriff's Office; source via Wikimedia Commons.",
+      "derivative_note": "Trimmed locally from the beginning of the 54:15 source to an exact 20-minute extract. Sensitive incident content; do not use as a neutral example.",
+      "status": "approved_local_use",
+      "local_path": "media/public_domain/ga_paulding_vehicle_burglary_dashcam_20m.webm"
+    },
+    {
+      "id": "meva-theft-sequence-20m",
+      "title": "MEVA fixed-camera theft sequence — to be selected after annotation lookup",
+      "country": "United States",
+      "media_type": "fixed-camera surveillance footage with scripted and annotated activity",
+      "source_url": "https://mevadata.org/",
+      "documentation_url": "https://mevadata.org/resources/README-meva-kf1-data.html",
+      "source_duration_note": "Ground-camera clips are typically five minutes; four adjacent clips will make an exact 20-minute sequence.",
+      "license": "CC BY 4.0",
+      "license_url": "https://mevadata.org/resources/MEVA-data-license.txt",
+      "attribution": "Multiview Extended Video with Activities (MEVA) dataset by Kitware Inc. and IARPA, CC BY 4.0.",
+      "derivative_note": "Pending a verified contiguous source sequence containing annotated person_steals_object activity.",
+      "status": "pending_source_selection",
+      "local_path": null
+    },
+    {
+      "id": "india-mnnit-shoplifting-clips",
+      "title": "Shoplifting Dataset (2022) — CV Laboratory, MNNIT Allahabad",
+      "country": "India",
+      "location": "Prayagraj, Uttar Pradesh",
+      "media_type": "synthetic/lab-recorded shoplifting surveillance clips",
+      "source_url": "https://data.mendeley.com/datasets/r3yjf35hzr/2",
+      "source_duration_note": "182 MP4 clips; individual durations are not published and this is not confirmed as a native 15–20 minute continuous video source.",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "attribution": "Mohd. Aquib Ansari and Dushyant Kumar Singh, CV Laboratory, MNNIT Allahabad; CC BY 4.0.",
+      "derivative_note": "May be used only to create an explicitly labelled composite retrieval reel after inspecting the downloaded clips.",
+      "status": "pending_access_and_duration_check",
+      "local_path": null
+    }
+  ],
+  "excluded_sources": [
+    {
+      "id": "cairo-giza-youtube",
+      "source_url": "https://www.youtube.com/watch?v=JkCQpEoiuuc",
+      "reason": "No verified reuse licence or recorded permission. Not downloaded."
+    },
+    {
+      "id": "mumbai-anuj-n-youtube",
+      "source_url": "https://www.youtube.com/watch?v=99L4-gm9WdQ",
+      "reason": "Ordinary YouTube upload; creator requests licensing for reuse. Not downloaded."
+    }
+  ]
+}

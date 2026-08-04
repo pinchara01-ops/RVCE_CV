@@ -1,14 +1,26 @@
 from __future__ import annotations
 import json
+import logging
+import mimetypes
 import re
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from .debug_jobs import JobManager, sanitize
 from .preflight import model_statuses
 from .config import Settings
+from .library import collection_health, get_window, list_videos, list_windows, media_path_for_window
+from .probe import VideoProbeError
+from query_retrieval import api as query_api
+from query_retrieval.models import SearchRequest, SearchResponse, VerifyRequest, VerifyResponse
 
 app = FastAPI(title="Processing Debug API")
+logger = logging.getLogger(__name__)
+MULTIPART_PARSE_ERROR = "There was an error parsing the body"
+MULTIPART_RECOVERY_MESSAGE = (
+    "The upload could not be read. Re-select the video and retry, keeping this page open until the upload completes."
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -18,11 +30,65 @@ app.add_middleware(
         "http://127.0.0.1:3001",
         "http://localhost:3017",
         "http://127.0.0.1:3017",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 manager = JobManager()
+
+
+@app.exception_handler(StarletteHTTPException)
+async def friendly_upload_parse_error(request: Request, exc: StarletteHTTPException):
+    """Make FastAPI's opaque pre-endpoint multipart error actionable.
+
+    File/Form parameters are parsed before ``create_job`` is invoked, so this
+    narrow handler is the only place to recover from a malformed or interrupted
+    upload without changing unrelated API errors.
+    """
+    if (
+        request.url.path == "/api/processing/jobs"
+        and exc.status_code == 400
+        and exc.detail == MULTIPART_PARSE_ERROR
+    ):
+        cause = type(exc.__cause__).__name__ if exc.__cause__ else "unknown"
+        logger.warning("Processing upload multipart parse failed (cause=%s)", cause)
+        return JSONResponse(status_code=400, content={"detail": MULTIPART_RECOVERY_MESSAGE})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers,
+    )
+
+
+def media_response(path, request: Request):
+    """Serve a local indexed upload with browser range-request support."""
+    size = path.stat().st_size
+    content_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
+    header = request.headers.get("range")
+    if not header:
+        return FileResponse(path, media_type=content_type)
+    match = re.match(r"bytes=(\d*)-(\d*)", header)
+    if not match:
+        raise HTTPException(416, "Invalid range")
+    start = int(match.group(1) or 0)
+    end = min(int(match.group(2) or size - 1), size - 1)
+    if start > end or start >= size:
+        raise HTTPException(416, "Range outside file")
+    with path.open("rb") as stream:
+        stream.seek(start)
+        data = stream.read(end - start + 1)
+    return Response(
+        data,
+        status_code=206,
+        media_type=content_type,
+        headers={
+            "Content-Range": f"bytes {start}-{end}/{size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(len(data)),
+        },
+    )
 
 
 def job_or_404(job_id):
@@ -34,7 +100,11 @@ def job_or_404(job_id):
 
 @app.get("/api/processing/preflight")
 def preflight():
-    return {"models": [x.model_dump() for x in model_statuses(Settings.from_env())]}
+    return {
+        "models": [
+            x.model_dump() for x in model_statuses(Settings.from_env(), "selection_only")
+        ]
+    }
 
 
 @app.post("/api/processing/jobs", status_code=201)
@@ -44,7 +114,7 @@ async def create_job(video: UploadFile = File(...), configuration: str = Form("{
         data = await video.read()
         job = manager.create(video.filename or "", data, config)
         return job.public()
-    except (ValueError, json.JSONDecodeError) as exc:
+    except (ValueError, VideoProbeError, json.JSONDecodeError) as exc:
         raise HTTPException(400, str(exc))
 
 
@@ -118,30 +188,7 @@ def evaluation(job_id: str, window_index: int, label: dict):
 @app.get("/api/processing/jobs/{job_id}/video")
 def video(job_id: str, request: Request):
     job = job_or_404(job_id)
-    size = job.video_path.stat().st_size
-    header = request.headers.get("range")
-    if not header:
-        return FileResponse(job.video_path)
-    match = re.match(r"bytes=(\d*)-(\d*)", header)
-    if not match:
-        raise HTTPException(416, "Invalid range")
-    start = int(match.group(1) or 0)
-    end = min(int(match.group(2) or size - 1), size - 1)
-    if start > end or start >= size:
-        raise HTTPException(416, "Range outside file")
-    with job.video_path.open("rb") as stream:
-        stream.seek(start)
-        data = stream.read(end - start + 1)
-    return Response(
-        data,
-        status_code=206,
-        media_type="video/mp4",
-        headers={
-            "Content-Range": f"bytes {start}-{end}/{size}",
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(len(data)),
-        },
-    )
+    return media_response(job.video_path, request)
 
 
 @app.get("/api/processing/jobs/{job_id}/frames/{window_index}")
@@ -169,3 +216,73 @@ def export(job_id: str, export_type: str):
     if job.directory not in path.parents or not path.is_file():
         raise HTTPException(404, "Export unavailable")
     return FileResponse(path, filename=path.name)
+
+
+# --- Persistent indexed-library read model ---------------------------------
+
+
+@app.get("/api/index/health")
+def index_health():
+    return collection_health()
+
+
+@app.get("/api/index/videos")
+def indexed_videos(limit: int = 500):
+    try:
+        return {"videos": list_videos(limit=limit)}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"Could not read indexed videos: {exc}") from exc
+
+
+@app.get("/api/index/windows")
+def indexed_windows(video_id: str | None = None, limit: int = 100, vectors: bool = False):
+    try:
+        return {
+            "windows": list_windows(
+                video_id=video_id, limit=limit, include_vectors=vectors
+            )
+        }
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"Could not read indexed windows: {exc}") from exc
+
+
+@app.get("/api/index/windows/{window_id}")
+def indexed_window(window_id: str, vectors: bool = True):
+    try:
+        record = get_window(window_id, include_vectors=vectors)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"Could not read indexed window: {exc}") from exc
+    if record is None:
+        raise HTTPException(404, "Indexed window not found")
+    return record
+
+
+@app.get("/api/index/media/{window_id}")
+def indexed_media(window_id: str, request: Request):
+    try:
+        path = media_path_for_window(window_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"Could not resolve indexed media: {exc}") from exc
+    if path is None:
+        raise HTTPException(404, "Indexed media is unavailable")
+    return media_response(path, request)
+
+
+# --- Query API wrappers -----------------------------------------------------
+# Kept in the same FastAPI process as indexing, but lazy model loading stays
+# inside query_api so opening the upload UI never triggers query-model work.
+
+
+@app.post("/api/query/search", response_model=SearchResponse)
+def query_search(request: SearchRequest):
+    return query_api.search(request)
+
+
+@app.post("/api/query/verify", response_model=VerifyResponse)
+def query_verify(request: VerifyRequest):
+    return query_api.verify(request)
+
+
+@app.get("/api/query/health")
+def query_health():
+    return query_api.health()

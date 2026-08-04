@@ -57,6 +57,7 @@ class ProcessingPipeline:
         store,
         settings: Settings | None = None,
         clock=time.monotonic,
+        progress_callback=None,
     ):
         self.transcriber, self.visual, self.audio, self.text, self.vlm, self.store = (
             transcriber,
@@ -68,7 +69,12 @@ class ProcessingPipeline:
         )
         self.settings = settings or Settings()
         self.clock = clock
+        self.progress_callback = progress_callback
         self.stage_durations = {name: 0.0 for name in STAGES}
+
+    def _progress(self, stage, fraction, current_window=0, total_windows=0):
+        if self.progress_callback is not None:
+            self.progress_callback(stage, fraction, current_window, total_windows)
 
     def _timed(self, stage, operation):
         started = self.clock()
@@ -80,7 +86,9 @@ class ProcessingPipeline:
     def _prepare(self, path, windows, segments, has_audio):
         prepared = []
         errors = {}
-        for window in windows:
+        total = len(windows)
+        for index, window in enumerate(windows):
+            self._progress("embedding_windows", 0.20 + 0.35 * index / max(total, 1), index, total)
             try:
                 transcript = transcript_for_window(segments, window.start, window.end)
                 visual = self._timed("xclip", lambda: self.visual.encode(path, window))
@@ -170,6 +178,7 @@ class ProcessingPipeline:
         self.stage_durations = {name: 0.0 for name in STAGES}
         started = self.clock()
         path = Path(video_path).expanduser().resolve()
+        self._progress("ffprobe_validation", 0.02)
         video_id, metadata = self._timed(
             "ffprobe_validation", lambda: (stable_video_id(path), probe_video(path))
         )
@@ -184,9 +193,11 @@ class ProcessingPipeline:
         )
         if self.settings.max_windows is not None:
             windows = windows[: self.settings.max_windows]
+        self._progress("transcription", 0.10, 0, len(windows))
         segments = self._timed(
             "whisper", lambda: self.transcriber.transcribe(path, metadata.has_audio)
         )
+        self._progress("qdrant_schema", 0.18, 0, len(windows))
         self._timed("qdrant", self.store.ensure_collection)
         prepared, errors = self._prepare(path, windows, segments, metadata.has_audio)
         if not prepared:
@@ -203,10 +214,18 @@ class ProcessingPipeline:
                 status=RunStatus.failed,
                 stage_durations=self.stage_durations,
             )
+        self._progress("selecting_windows", 0.56, len(prepared), len(windows))
         decisions = self._timed("selector", lambda: self._select(prepared))
-        direct, vlm_failures, selected = self._timed(
-            "openai_vlm", lambda: self._run_vlm(path, prepared, decisions)
-        )
+        self._progress("captioning_windows", 0.62, 0, len(prepared))
+        if getattr(self.vlm, "disabled", False):
+            # Selection-only indexing still calculates selection evidence, but
+            # deliberately performs no VLM calls and must not label empty
+            # captions as direct VLM output.
+            direct, vlm_failures, selected = {}, {}, set()
+        else:
+            direct, vlm_failures, selected = self._timed(
+                "openai_vlm", lambda: self._run_vlm(path, prepared, decisions)
+            )
         errors.update(
             {
                 prepared[index].window.window_id: f"VLM failed: {message}"
@@ -216,6 +235,7 @@ class ProcessingPipeline:
         records = []
         inherited_count = unavailable_count = 0
         for index, item in enumerate(prepared):
+            self._progress("building_payloads", 0.74 + 0.12 * index / max(len(prepared), 1), index, len(prepared))
             decision = decisions[index]
             if index in direct:
                 description = direct[index]
@@ -298,6 +318,7 @@ class ProcessingPipeline:
         indexed = 0
         for offset in range(0, len(records), self.settings.batch_size):
             batch = records[offset : offset + self.settings.batch_size]
+            self._progress("writing_qdrant", 0.87 + 0.12 * offset / max(len(records), 1), offset, len(records))
             try:
                 self._timed("qdrant", lambda: self.store.upsert(batch))
                 indexed += len(batch)
@@ -323,6 +344,7 @@ class ProcessingPipeline:
             for name in ("visual", "audio", "speech", "combined")
         }
         selected_count = len(selected)
+        self._progress("complete", 1.0, len(records), len(records))
         return ProcessingReport(
             video_id=video_id,
             duration=metadata.duration,

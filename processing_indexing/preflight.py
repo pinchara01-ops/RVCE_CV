@@ -69,6 +69,18 @@ def model_statuses(
                 else "OPENAI_API_KEY is not configured",
             )
         )
+    elif mode == "cosmos":
+        result.append(
+            ModelStatus(
+                component="vlm",
+                checkpoint="nvidia/cosmos3-nano-reasoner",
+                device="hosted",
+                expected_dimension=None,
+                cache_available=False,
+                provider_kind="real",
+                message="Hosted NVIDIA Cosmos provider; enter an NVIDIA API key for this job",
+            )
+        )
     elif mode == "mock":
         result.append(
             ModelStatus(
