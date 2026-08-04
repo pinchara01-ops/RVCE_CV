@@ -21,6 +21,19 @@ from .windowing import generate_windows, transcript_for_window
 
 CAPTION_UNAVAILABLE_TEXT = "[CAPTION UNAVAILABLE]"
 INHERITED_PREFIX = "Inherited nearby scene context"
+STAGES = (
+    "ffprobe_validation",
+    "media_decoding_window_creation",
+    "whisper",
+    "xclip",
+    "clap",
+    "bge_m3_speech",
+    "selector",
+    "openai_vlm",
+    "bge_m3_caption",
+    "qdrant",
+    "export_generation",
+)
 
 
 @dataclass
@@ -43,6 +56,7 @@ class ProcessingPipeline:
         vlm,
         store,
         settings: Settings | None = None,
+        clock=time.monotonic,
     ):
         self.transcriber, self.visual, self.audio, self.text, self.vlm, self.store = (
             transcriber,
@@ -53,6 +67,15 @@ class ProcessingPipeline:
             store,
         )
         self.settings = settings or Settings()
+        self.clock = clock
+        self.stage_durations = {name: 0.0 for name in STAGES}
+
+    def _timed(self, stage, operation):
+        started = self.clock()
+        try:
+            return operation()
+        finally:
+            self.stage_durations[stage] += self.clock() - started
 
     def _prepare(self, path, windows, segments, has_audio):
         prepared = []
@@ -60,9 +83,13 @@ class ProcessingPipeline:
         for window in windows:
             try:
                 transcript = transcript_for_window(segments, window.start, window.end)
-                visual = self.visual.encode(path, window)
-                audio = self.audio.encode(path, window, has_audio)
-                speech = self.text.encode([transcript])[0]
+                visual = self._timed("xclip", lambda: self.visual.encode(path, window))
+                audio = self._timed(
+                    "clap", lambda: self.audio.encode(path, window, has_audio)
+                )
+                speech = self._timed(
+                    "bge_m3_speech", lambda: self.text.encode([transcript])[0]
+                )
                 meaningful_audio = has_audio and any(
                     abs(value) > 1e-8 for value in audio
                 )
@@ -140,20 +167,27 @@ class ProcessingPipeline:
         return None
 
     def process_video(self, video_path: Path) -> ProcessingReport:
-        started = time.monotonic()
+        self.stage_durations = {name: 0.0 for name in STAGES}
+        started = self.clock()
         path = Path(video_path).expanduser().resolve()
-        video_id = stable_video_id(path)
-        metadata = probe_video(path)
-        windows = generate_windows(
-            video_id,
-            metadata.duration,
-            self.settings.window_seconds,
-            self.settings.stride_seconds,
+        video_id, metadata = self._timed(
+            "ffprobe_validation", lambda: (stable_video_id(path), probe_video(path))
+        )
+        windows = self._timed(
+            "media_decoding_window_creation",
+            lambda: generate_windows(
+                video_id,
+                metadata.duration,
+                self.settings.window_seconds,
+                self.settings.stride_seconds,
+            ),
         )
         if self.settings.max_windows is not None:
             windows = windows[: self.settings.max_windows]
-        segments = self.transcriber.transcribe(path, metadata.has_audio)
-        self.store.ensure_collection()
+        segments = self._timed(
+            "whisper", lambda: self.transcriber.transcribe(path, metadata.has_audio)
+        )
+        self._timed("qdrant", self.store.ensure_collection)
         prepared, errors = self._prepare(path, windows, segments, metadata.has_audio)
         if not prepared:
             return ProcessingReport(
@@ -164,12 +198,15 @@ class ProcessingPipeline:
                 failed_windows=len(windows),
                 vlm_successes=0,
                 vlm_failures=0,
-                elapsed_seconds=time.monotonic() - started,
+                elapsed_seconds=self.clock() - started,
                 errors=errors,
                 status=RunStatus.failed,
+                stage_durations=self.stage_durations,
             )
-        decisions = self._select(prepared)
-        direct, vlm_failures, selected = self._run_vlm(path, prepared, decisions)
+        decisions = self._timed("selector", lambda: self._select(prepared))
+        direct, vlm_failures, selected = self._timed(
+            "openai_vlm", lambda: self._run_vlm(path, prepared, decisions)
+        )
         errors.update(
             {
                 prepared[index].window.window_id: f"VLM failed: {message}"
@@ -224,7 +261,9 @@ class ProcessingPipeline:
                         caption_source_distance=0,
                         caption_confidence=0.0,
                     )
-            caption_vector = self.text.encode([caption_text])[0]
+            caption_vector = self._timed(
+                "bge_m3_caption", lambda: self.text.encode([caption_text])[0]
+            )
             payload = WindowPayload(
                 video_id=video_id,
                 window_id=item.window.window_id,
@@ -238,6 +277,15 @@ class ProcessingPipeline:
                 change_scores=decision.change_scores,
                 change_from_previous=decision.change_from_previous,
                 change_from_last_vlm=decision.change_from_last_vlm,
+                vlm_call_state=(
+                    "failed"
+                    if index in vlm_failures
+                    else "succeeded"
+                    if index in direct
+                    else "inherited"
+                    if provenance["caption_inherited"]
+                    else "unavailable"
+                ),
                 **provenance,
             )
             vectors = WindowVectors(
@@ -251,16 +299,20 @@ class ProcessingPipeline:
         for offset in range(0, len(records), self.settings.batch_size):
             batch = records[offset : offset + self.settings.batch_size]
             try:
-                self.store.upsert(batch)
+                self._timed("qdrant", lambda: self.store.upsert(batch))
                 indexed += len(batch)
             except Exception as exc:
                 for payload, _ in batch:
                     errors[payload.window_id] = f"Qdrant upsert failed: {exc}"
         failed = len(windows) - indexed
         status = (
-            RunStatus.complete
-            if failed == 0
-            else (RunStatus.partial if indexed else RunStatus.failed)
+            RunStatus.failed
+            if not indexed
+            else RunStatus.partial
+            if failed
+            else RunStatus.completed_with_errors
+            if vlm_failures
+            else RunStatus.complete
         )
         reason_counts = Counter(
             reason for decision in decisions for reason in decision.reasons
@@ -279,7 +331,7 @@ class ProcessingPipeline:
             failed_windows=failed,
             vlm_successes=len(direct),
             vlm_failures=len(vlm_failures),
-            elapsed_seconds=time.monotonic() - started,
+            elapsed_seconds=self.clock() - started,
             errors=errors,
             status=status,
             selected_vlm_windows=selected_count,
@@ -307,4 +359,5 @@ class ProcessingPipeline:
                 "max_gap_windows": self.settings.vlm_max_gap_windows,
                 "max_selected_ratio": self.settings.vlm_max_selected_ratio,
             },
+            stage_durations=self.stage_durations,
         )

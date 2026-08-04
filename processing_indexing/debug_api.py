@@ -76,7 +76,13 @@ def events(job_id: str):
             while sent < len(job.events):
                 yield f"data: {json.dumps(job.events[sent])}\n\n"
                 sent += 1
-            if job.status in {"complete", "failed", "cancelled"}:
+            if job.status in {
+                "complete",
+                "completed_with_errors",
+                "partial",
+                "failed",
+                "cancelled",
+            }:
                 break
             import time
 

@@ -17,6 +17,48 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 SECRET_KEYS = {"openai_api_key", "api_key", "qdrant_api_key", "authorization"}
 
 
+def summarize_openai_usage(openai_debug):
+    categories = {
+        "successful_captured": {
+            "calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        },
+        "failed_captured": {
+            "calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        },
+    }
+    unknown = 0
+    for value in openai_debug.values():
+        for attempt in value.get("attempts", []):
+            usage = attempt.get("usage")
+            if attempt.get("usage_status") != "captured" or usage is None:
+                unknown += 1
+                continue
+            key = (
+                "successful_captured"
+                if attempt.get("status") == "succeeded"
+                else "failed_captured"
+            )
+            categories[key]["calls"] += 1
+            for token_field in ("input_tokens", "output_tokens", "total_tokens"):
+                categories[key][token_field] += int(usage.get(token_field, 0))
+    minimum = {
+        token_field: categories["successful_captured"][token_field]
+        + categories["failed_captured"][token_field]
+        for token_field in ("input_tokens", "output_tokens", "total_tokens")
+    }
+    return {
+        **categories,
+        "calls_with_unknown_usage": unknown,
+        "minimum_known_usage": minimum,
+    }
+
+
 def sanitize(value):
     if isinstance(value, dict):
         return {
@@ -169,6 +211,9 @@ class JobManager:
             if job.cancel_requested:
                 job.status = "cancelled"
                 job.stage = "cancelled"
+                job.report["status"] = "cancelled"
+                job.finished_at = time.time()
+                self._write_artifacts(job)
                 self._event(job, "cancelled")
                 return
             pipeline_status = job.report.get("status", "failed")
@@ -180,17 +225,24 @@ class JobManager:
                 self._write_artifacts(job)
                 self._event(job, "failed", message="Processing pipeline failed")
                 return
-            job.stage = "partial" if pipeline_status == "partial" else "complete"
+            job.stage = pipeline_status
             job.status = pipeline_status
             job.progress = 1.0
             job.finished_at = time.time()
             self._write_artifacts(job)
-            self._event(job, "complete")
+            self._event(job, pipeline_status)
         except Exception as exc:
             job.status = "failed"
             job.stage = "failed"
             job.finished_at = time.time()
             job.errors.append({"message": str(exc)})
+            job.report = {
+                **job.report,
+                "status": "failed",
+                "errors": job.report.get("errors", {}),
+                "stage_durations": job.report.get("stage_durations", {}),
+            }
+            self._write_artifacts(job)
             self._event(job, "failed", message=str(exc))
         finally:
             with self._lock:
@@ -328,14 +380,16 @@ class JobManager:
                 def describe(self, *args):
                     check()
                     job.stage = "openai_vlm"
-                    result = inner.describe(*args)
                     window = args[1]
-                    openai_debug[window.index] = {
-                        "request": inner.last_sanitized_request,
-                        "response": inner.last_sanitized_response,
-                        "usage": inner.last_usage,
-                    }
-                    return result
+                    try:
+                        return inner.describe(*args)
+                    finally:
+                        openai_debug[window.index] = {
+                            "request": inner.last_sanitized_request,
+                            "response": inner.last_sanitized_response,
+                            "usage": inner.last_usage,
+                            "attempts": list(inner.attempts),
+                        }
 
             openai_debug = {}
             vlm = OpenAIGuard()
@@ -382,9 +436,7 @@ class JobManager:
                     "change_scores": payload.change_scores,
                     "selected": bool(payload.selection_reasons),
                     "selection_reasons": payload.selection_reasons,
-                    "vlm_call_state": "succeeded"
-                    if payload.vlm_processed
-                    else "skipped",
+                    "vlm_call_state": payload.vlm_call_state,
                     "caption": payload.caption,
                     "provenance": provenance,
                     "confidence": payload.caption_confidence,
@@ -395,7 +447,11 @@ class JobManager:
                     "openai": openai_debug.get(int(payload.window_id.rsplit("_", 1)[1]))
                     if mode == "openai"
                     else None,
-                    "errors": [],
+                    "errors": (
+                        [report.errors[payload.window_id]]
+                        if payload.window_id in report.errors
+                        else []
+                    ),
                 }
             )
         job.report = report.model_dump(mode="json")
@@ -405,10 +461,14 @@ class JobManager:
         )
         job.report.update(
             {
-                "actual_openai_calls": report.successful_vlm_windows
-                + report.failed_vlm_windows
+                "actual_openai_calls": sum(
+                    len(value.get("attempts", [])) for value in openai_debug.values()
+                )
                 if mode == "openai"
                 else 0,
+                "openai_usage": summarize_openai_usage(openai_debug)
+                if mode == "openai"
+                else summarize_openai_usage({}),
                 "provider_mode": mode,
                 "qdrant_inserted": report.successfully_indexed_windows
                 if job.config.get("index_qdrant")
@@ -418,11 +478,9 @@ class JobManager:
         )
 
     def _write_artifacts(self, job):
+        export_started = time.perf_counter()
         exports = job.directory / "exports"
         exports.mkdir(exist_ok=True)
-        (exports / "processing_report.json").write_text(
-            json.dumps(sanitize(job.report), indent=2), encoding="utf-8"
-        )
         (exports / "window_debug.jsonl").write_text(
             "\n".join(json.dumps(sanitize(x)) for x in job.windows), encoding="utf-8"
         )
@@ -441,6 +499,9 @@ class JobManager:
                 "caption": x["caption"],
                 "provenance": x["provenance"],
                 "confidence": x["confidence"],
+                "vlm_call_state": x["vlm_call_state"],
+                "openai": x.get("openai"),
+                "errors": x["errors"],
             }
             for x in job.windows
         ]
@@ -459,7 +520,14 @@ class JobManager:
         output = io.StringIO()
         writer = csv.DictWriter(
             output,
-            fieldnames=["index", "start", "end", "selected", "selection_reasons"],
+            fieldnames=[
+                "index",
+                "start",
+                "end",
+                "selected",
+                "selection_reasons",
+                "vlm_call_state",
+            ],
         )
         writer.writeheader()
         for row in job.windows:
@@ -467,6 +535,12 @@ class JobManager:
         (exports / "selector_trace.csv").write_text(output.getvalue(), encoding="utf-8")
         (job.directory / "evaluation.json").write_text(
             json.dumps(job.evaluations, indent=2), encoding="utf-8"
+        )
+        job.report.setdefault("stage_durations", {})["export_generation"] = (
+            time.perf_counter() - export_started
+        )
+        (exports / "processing_report.json").write_text(
+            json.dumps(sanitize(job.report), indent=2), encoding="utf-8"
         )
 
 

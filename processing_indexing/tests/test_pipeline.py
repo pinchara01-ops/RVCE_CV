@@ -29,6 +29,16 @@ class VLM:
         return VLMDescription(actions=["waves"], scene_context="room", confidence=1)
 
 
+class StepClock:
+    def __init__(self):
+        self.value = 0.0
+
+    def __call__(self):
+        value = self.value
+        self.value += 1.0
+        return value
+
+
 def test_pipeline_payload_resume_and_idempotency(tmp_path, monkeypatch):
     path = tmp_path / "v"
     path.write_bytes(b"same")
@@ -93,6 +103,39 @@ def test_partial_failure_report(tmp_path, monkeypatch):
         and report.failed_windows == 1
         and report.successfully_indexed_windows == 1
     )
+
+
+def test_stage_timings_use_injected_wall_clock(tmp_path, monkeypatch):
+    path = tmp_path / "v"
+    path.write_bytes(b"same")
+    monkeypatch.setattr(
+        "processing_indexing.pipeline.probe_video",
+        lambda _: SimpleNamespace(duration=10.0, has_audio=False),
+    )
+    report = ProcessingPipeline(
+        SimpleNamespace(transcribe=lambda *a: []),
+        SimpleNamespace(encode=lambda *a: [0.0] * 512),
+        SimpleNamespace(encode=lambda *a: [0.0] * 512),
+        Text(),
+        VLM(),
+        Store(),
+        clock=StepClock(),
+    ).process_video(path)
+
+    assert report.stage_timing_semantics.startswith("accumulated wall-clock seconds")
+    assert report.stage_durations == {
+        "ffprobe_validation": 1.0,
+        "media_decoding_window_creation": 1.0,
+        "whisper": 1.0,
+        "xclip": 1.0,
+        "clap": 1.0,
+        "bge_m3_speech": 1.0,
+        "selector": 1.0,
+        "openai_vlm": 1.0,
+        "bge_m3_caption": 1.0,
+        "qdrant": 2.0,
+        "export_generation": 0.0,
+    }
 
 
 @pytest.mark.integration

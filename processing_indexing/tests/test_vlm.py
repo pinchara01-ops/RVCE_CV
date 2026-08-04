@@ -1,6 +1,7 @@
 import time
 import pytest
-from processing_indexing.models import VideoWindow
+from pydantic import ValidationError
+from processing_indexing.models import ActionTiming, VideoWindow
 from processing_indexing.models import VLMDescription
 from processing_indexing.vlm import (
     HostedQwenProvider,
@@ -120,3 +121,204 @@ def test_openai_provider_rejects_missing_structured_output():
     provider._encode_frames = lambda *_: []
     with pytest.raises(VLMError, match="validated structured output"):
         provider.describe(None, WINDOW)
+
+
+class SequencedResponses:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    def parse(self, **kwargs):
+        outcome = self.outcomes[self.calls]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def response(description=None, usage=None, output=None):
+    return type(
+        "Response",
+        (),
+        {"output_parsed": description, "usage": usage, "output": output or []},
+    )()
+
+
+def invalid_description():
+    try:
+        VLMDescription.model_validate({"confidence": "not-a-number"})
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("expected invalid fixture")
+
+
+def truncated_description():
+    try:
+        VLMDescription.model_validate_json('{"scene_context":"unfinished')
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("expected truncated fixture")
+
+
+def test_openai_retries_malformed_then_valid_and_records_each_attempt():
+    responses = SequencedResponses(
+        [invalid_description(), response(VLMDescription(scene_context="desk"))]
+    )
+    provider = OpenAIVisionProvider(
+        "secret", retries=1, client=type("Client", (), {"responses": responses})()
+    )
+    provider._encode_frames = lambda *_: []
+
+    assert provider.describe(None, WINDOW).scene_context == "desk"
+    assert [x["status"] for x in provider.attempts] == ["failed", "succeeded"]
+    assert provider.attempts[0]["failure_category"] == "schema_validation"
+    assert [x["attempt"] for x in provider.attempts] == [1, 2]
+    assert all(x["model"] == "gpt-4.1-mini" for x in provider.attempts)
+    assert "secret" not in str(provider.attempts)
+
+
+def test_openai_classifies_truncated_json_separately():
+    responses = SequencedResponses(
+        [truncated_description(), response(VLMDescription(scene_context="desk"))]
+    )
+    provider = OpenAIVisionProvider(
+        "secret", retries=1, client=type("Client", (), {"responses": responses})()
+    )
+    provider._encode_frames = lambda *_: []
+
+    provider.describe(None, WINDOW)
+
+    assert provider.attempts[0]["failure_category"] == "truncated_json"
+
+
+def test_openai_stops_after_bounded_always_malformed_responses():
+    responses = SequencedResponses([invalid_description(), invalid_description()])
+    provider = OpenAIVisionProvider(
+        "secret", retries=1, client=type("Client", (), {"responses": responses})()
+    )
+    provider._encode_frames = lambda *_: []
+
+    with pytest.raises(VLMError, match="2 attempts"):
+        provider.describe(None, WINDOW)
+    assert responses.calls == 2
+    assert len(provider.attempts) == 2
+
+
+def test_openai_does_not_retry_deterministic_refusal():
+    refusal = {"type": "message", "content": [{"type": "refusal", "refusal": "no"}]}
+    responses = SequencedResponses([response(output=[refusal])])
+    provider = OpenAIVisionProvider(
+        "secret", retries=2, client=type("Client", (), {"responses": responses})()
+    )
+    provider._encode_frames = lambda *_: []
+
+    with pytest.raises(VLMError, match="refused"):
+        provider.describe(None, WINDOW)
+    assert responses.calls == 1
+    assert provider.attempts[0]["failure_category"] == "refusal"
+
+
+@pytest.mark.parametrize(
+    "timing,duration,expected,status",
+    [
+        (
+            ActionTiming(action="a", start_seconds=-2, end_seconds=3),
+            10,
+            (0, 3),
+            "normalized",
+        ),
+        (
+            ActionTiming(action="a", start_seconds=2, end_seconds=15),
+            10,
+            (2, 10),
+            "normalized",
+        ),
+        (
+            ActionTiming(action="a", start_seconds=1, end_seconds=9),
+            10,
+            (1, 9),
+            "unchanged",
+        ),
+        (
+            ActionTiming(action="a", start_seconds=1, end_seconds=8),
+            3.5,
+            (1, 3.5),
+            "normalized",
+        ),
+    ],
+)
+def test_openai_normalizes_action_timing_to_selected_window(
+    timing, duration, expected, status
+):
+    window = VideoWindow(
+        video_id="v", window_id="v_window_0000", start=4, end=4 + duration
+    )
+    responses = SequencedResponses(
+        [response(VLMDescription(action_timing=[timing], confidence=1))]
+    )
+    provider = OpenAIVisionProvider(
+        "secret", retries=0, client=type("Client", (), {"responses": responses})()
+    )
+    provider._encode_frames = lambda *_: []
+
+    result = provider.describe(None, window)
+    assert (
+        result.action_timing[0].start_seconds,
+        result.action_timing[0].end_seconds,
+    ) == expected
+    diagnostic = provider.last_sanitized_response["timing_diagnostics"][0]
+    assert diagnostic["original"] == {
+        "start_seconds": timing.start_seconds,
+        "end_seconds": timing.end_seconds,
+    }
+    assert diagnostic["status"] == status
+
+
+def test_openai_rejects_reversed_action_timing_without_presenting_it():
+    timing = ActionTiming(action="a", start_seconds=8, end_seconds=2)
+    responses = SequencedResponses(
+        [response(VLMDescription(action_timing=[timing], confidence=1))]
+    )
+    provider = OpenAIVisionProvider(
+        "secret", retries=0, client=type("Client", (), {"responses": responses})()
+    )
+    provider._encode_frames = lambda *_: []
+
+    result = provider.describe(None, WINDOW)
+    assert result.action_timing == []
+    assert (
+        provider.last_sanitized_response["timing_diagnostics"][0]["status"]
+        == "rejected"
+    )
+
+
+def test_failed_attempt_usage_is_preserved_when_available():
+    error = invalid_description()
+    error.usage = {"input_tokens": 7, "output_tokens": 2, "total_tokens": 9}
+    provider = OpenAIVisionProvider(
+        "secret",
+        retries=0,
+        client=type("Client", (), {"responses": SequencedResponses([error])})(),
+    )
+    provider._encode_frames = lambda *_: []
+
+    with pytest.raises(VLMError):
+        provider.describe(None, WINDOW)
+    assert provider.attempts[0]["usage_status"] == "captured"
+    assert provider.attempts[0]["usage"]["total_tokens"] == 9
+
+
+def test_failed_attempt_marks_usage_unavailable_instead_of_zero():
+    provider = OpenAIVisionProvider(
+        "secret",
+        retries=0,
+        client=type(
+            "Client", (), {"responses": SequencedResponses([invalid_description()])}
+        )(),
+    )
+    provider._encode_frames = lambda *_: []
+
+    with pytest.raises(VLMError):
+        provider.describe(None, WINDOW)
+    assert provider.attempts[0]["usage_status"] == "unavailable"
+    assert provider.attempts[0]["usage"] is None

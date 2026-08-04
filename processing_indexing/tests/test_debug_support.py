@@ -6,7 +6,13 @@ from fastapi.testclient import TestClient
 
 from processing_indexing.config import Settings
 from processing_indexing.debug_cache import cache_invalidation
-from processing_indexing.debug_jobs import Job, JobManager, safe_filename, sanitize
+from processing_indexing.debug_jobs import (
+    Job,
+    JobManager,
+    safe_filename,
+    sanitize,
+    summarize_openai_usage,
+)
 from processing_indexing.preflight import model_statuses
 
 
@@ -128,3 +134,157 @@ def test_inner_pipeline_failure_is_not_reported_as_complete(tmp_path, monkeypatc
         ]
         == "w"
     )
+
+
+@pytest.mark.parametrize(
+    "pipeline_status,expected_status,expected_event",
+    [
+        ("complete", "complete", "complete"),
+        ("completed_with_errors", "completed_with_errors", "completed_with_errors"),
+        ("failed", "failed", "failed"),
+    ],
+)
+def test_job_status_and_terminal_event_agree(
+    tmp_path, monkeypatch, pipeline_status, expected_status, expected_event
+):
+    manager = JobManager(tmp_path)
+    path = tmp_path / "j" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job("j", path.parent, path, {"vlm_mode": "selection_only"}, {})
+    manager.jobs[job.id] = job
+
+    def finish(inner_job, *_):
+        inner_job.report = {"status": pipeline_status, "errors": {}}
+
+    monkeypatch.setattr(manager, "_execute_pipeline", finish)
+    manager._run(job)
+
+    assert job.status == job.stage == expected_status
+    assert job.events[-1]["event"] == expected_event
+
+
+def test_cancelled_job_status_and_event_agree(tmp_path, monkeypatch):
+    manager = JobManager(tmp_path)
+    path = tmp_path / "j" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job("j", path.parent, path, {"vlm_mode": "selection_only"}, {})
+    manager.jobs[job.id] = job
+
+    def cancel(inner_job, *_):
+        inner_job.report = {"status": "complete", "errors": {}}
+        inner_job.cancel_requested = True
+
+    monkeypatch.setattr(manager, "_execute_pipeline", cancel)
+    manager._run(job)
+
+    assert job.status == job.stage == "cancelled"
+    assert job.report["status"] == "cancelled"
+    saved = json.loads(
+        (job.directory / "exports" / "processing_report.json").read_text()
+    )
+    assert saved["status"] == "cancelled"
+    assert job.events[-1]["event"] == "cancelled"
+
+
+def test_completed_with_errors_sse_is_terminal(tmp_path, monkeypatch):
+    from processing_indexing import debug_api
+
+    manager = JobManager(tmp_path)
+    path = tmp_path / "j" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job("j", path.parent, path, {}, {}, status="completed_with_errors")
+    job.events.append({"sequence": 0, "event": "completed_with_errors", "timestamp": 1})
+    manager.jobs[job.id] = job
+    monkeypatch.setattr(debug_api, "manager", manager)
+
+    response = TestClient(debug_api.app).get("/api/processing/jobs/j/events")
+
+    assert response.status_code == 200
+    assert "completed_with_errors" in response.text
+
+
+def test_failed_selected_window_api_contract_uses_failed_state(tmp_path, monkeypatch):
+    from processing_indexing import debug_api
+
+    manager = JobManager(tmp_path)
+    path = tmp_path / "j" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job("j", path.parent, path, {}, {})
+    job.windows = [
+        {
+            "index": 1,
+            "selected": True,
+            "vlm_call_state": "failed",
+            "errors": ["structured output failed"],
+        }
+    ]
+    manager.jobs[job.id] = job
+    monkeypatch.setattr(debug_api, "manager", manager)
+
+    row = TestClient(debug_api.app).get("/api/processing/jobs/j/windows/1").json()
+
+    assert row["selected"] is True
+    assert row["vlm_call_state"] == "failed"
+
+
+def test_export_generation_duration_is_added_to_report(tmp_path, monkeypatch):
+    manager = JobManager(tmp_path)
+    path = tmp_path / "j" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job("j", path.parent, path, {}, {})
+    job.report = {"stage_durations": {"export_generation": 0.0}}
+    ticks = iter([10.0, 12.5])
+    monkeypatch.setattr(
+        "processing_indexing.debug_jobs.time.perf_counter", lambda: next(ticks)
+    )
+
+    manager._write_artifacts(job)
+
+    saved = json.loads(
+        (job.directory / "exports" / "processing_report.json").read_text()
+    )
+    assert saved["stage_durations"]["export_generation"] == 2.5
+
+
+def test_openai_usage_separates_success_failure_and_unknown():
+    debug = {
+        0: {
+            "attempts": [
+                {
+                    "status": "failed",
+                    "usage_status": "captured",
+                    "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+                },
+                {
+                    "status": "succeeded",
+                    "usage_status": "captured",
+                    "usage": {"input_tokens": 7, "output_tokens": 2, "total_tokens": 9},
+                },
+            ]
+        },
+        1: {
+            "attempts": [
+                {
+                    "status": "failed",
+                    "usage_status": "unavailable",
+                    "usage": None,
+                }
+            ]
+        },
+    }
+
+    usage = summarize_openai_usage(debug)
+
+    assert usage["successful_captured"]["calls"] == 1
+    assert usage["failed_captured"]["calls"] == 1
+    assert usage["calls_with_unknown_usage"] == 1
+    assert usage["minimum_known_usage"] == {
+        "input_tokens": 12,
+        "output_tokens": 3,
+        "total_tokens": 15,
+    }

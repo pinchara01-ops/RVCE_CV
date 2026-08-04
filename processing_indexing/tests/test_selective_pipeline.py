@@ -121,6 +121,9 @@ def test_previous_vlm_failure_selects_next_window_for_recovery(tmp_path, monkeyp
     assert report.skipped_vlm_windows == 2
     assert report.estimated_calls_saved == 2
     assert report.selection_count_by_reason["previous_vlm_failure"] == 1
+    failed = store.points[sorted(store.points)[0]][0]
+    assert failed.vlm_call_state == "failed"
+    assert report.status == "completed_with_errors"
 
 
 def test_low_confidence_selects_next_window_earlier(tmp_path, monkeypatch):
@@ -151,6 +154,7 @@ def test_consecutive_failures_advance_once_per_window_and_terminate(
     assert report.failed_vlm_windows == 5
     assert report.successful_vlm_windows == 0
     assert report.skipped_vlm_windows == 0
+    assert report.status == "completed_with_errors"
 
 
 def test_last_window_failure_never_promotes_beyond_video(tmp_path, monkeypatch):

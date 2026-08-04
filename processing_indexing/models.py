@@ -83,12 +83,14 @@ class WindowPayload(BaseModel):
     change_scores: dict[str, float] = {}
     change_from_previous: dict[str, float | None] = {}
     change_from_last_vlm: dict[str, float | None] = {}
+    vlm_call_state: str = "unavailable"
 
 
 class ActionTiming(BaseModel):
     action: str
-    start_seconds: float = Field(ge=0)
-    end_seconds: float = Field(ge=0)
+    # Provider outputs are normalized against the selected window after parsing.
+    start_seconds: float
+    end_seconds: float
 
 
 class VLMDescription(BaseModel):
@@ -138,6 +140,7 @@ class VLMDescription(BaseModel):
 
 class RunStatus(str, Enum):
     complete = "complete"
+    completed_with_errors = "completed_with_errors"
     partial = "partial"
     failed = "failed"
 
@@ -165,3 +168,8 @@ class ProcessingReport(BaseModel):
     selection_count_by_reason: dict[str, int] = {}
     average_change: dict[str, float] = {}
     selection_config: dict[str, float | int | bool] = {}
+    stage_durations: dict[str, float] = {}
+    stage_timing_semantics: str = (
+        "accumulated wall-clock seconds per stage; batched or overlapping work may "
+        "make stage sums differ from total elapsed time"
+    )
