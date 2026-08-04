@@ -3,9 +3,9 @@ import { filterWindows } from "./filters";
 import type { WindowRow } from "./api";
 
 const row = (overrides: Partial<WindowRow>): WindowRow => ({
-  index: 0, window_id: "v_window_0000", start: 0, end: 10, transcript: "", change_scores: {}, selected: false,
+  index: 0, video_id: "v", window_id: "v_window_0000", start: 0, end: 10, transcript: "", change_scores: {}, selected: false,
   selection_reasons: [], vlm_call_state: "unavailable", caption: "", provenance: "unavailable",
-  confidence: 0, indexed: false, point_id: null, vectors: {}, errors: [], ...overrides,
+  has_audio: false, confidence: 0, indexed: false, point_id: null, stored_payload: {}, vectors: {}, errors: [], ...overrides,
 });
 
 describe("filterWindows", () => {

@@ -1,3 +1,12 @@
-import type {Metadata} from "next";import Link from "next/link";import "./globals.css";
-export const metadata:Metadata={title:"Processing Diagnostics",description:"Video processing pipeline debugger"};
-export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="en"><body><header><strong>Processing Diagnostics</strong><Link href="/processing">New job</Link></header>{children}</body></html>}
+import type { Metadata } from "next";
+import { AppNav } from "@/components/AppNav";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "Video Index",
+  description: "Local multimodal video indexing and search workbench",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html lang="en"><body><AppNav />{children}</body></html>;
+}

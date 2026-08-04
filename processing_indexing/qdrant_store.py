@@ -73,3 +73,22 @@ class QdrantStore:
                     if attempt == self.retries:
                         raise
                     time.sleep(2**attempt)
+
+    def existing_window_ids(self, video_id: str) -> set[str]:
+        """Return already-indexed window IDs for one video without vectors."""
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+        records, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=Filter(
+                must=[FieldCondition(key="video_id", match=MatchValue(value=video_id))]
+            ),
+            limit=10_000,
+            with_payload=["window_id"],
+            with_vectors=False,
+        )
+        return {
+            str((record.payload or {}).get("window_id"))
+            for record in records
+            if (record.payload or {}).get("window_id")
+        }

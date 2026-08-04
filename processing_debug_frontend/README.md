@@ -1,6 +1,6 @@
 # Processing debug frontend
 
-Temporary functional Next.js App Router UI for the processing/indexing pipeline. Start the FastAPI service at `http://127.0.0.1:8000`, then run `npm install` and `npm run dev`. Override the API origin with `NEXT_PUBLIC_PROCESSING_API`.
+Functional Next.js App Router UI for the processing/indexing and retrieval pipeline. Start the unified FastAPI service at `http://127.0.0.1:8000`, then run `npm install` and `npm run dev`. Override the API origin with `NEXT_PUBLIC_PROCESSING_API_URL`.
 
 Routes include job setup, live status, window diagnostics, per-window detail/evaluation, and a multimodal change timeline. Secrets and Python models remain server-side.
 

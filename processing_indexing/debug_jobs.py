@@ -150,6 +150,7 @@ class JobManager:
         metadata = probe_video(path).model_dump()
         video_id = stable_video_id(path)
         metadata["video_id"] = video_id
+        metadata["filename"] = name
         job = Job(job_id, directory, path, sanitize(config), metadata)
         self.jobs[job_id] = job
         self._event(job, "created")
@@ -176,7 +177,10 @@ class JobManager:
         with self._lock:
             if self._active and self._active != job_id:
                 raise RuntimeError("Another processing job is active")
-            if job.status not in {"created", "cancelled", "failed"}:
+            # A job directory is a durable record of one attempt.  Reusing it
+            # after cancellation/failure previously mixed old rows with a new
+            # run, so the UI now makes every retry a fresh upload/job.
+            if job.status != "created":
                 raise RuntimeError("Job cannot be started")
             self._active = job_id
             job.status = "queued"
@@ -200,7 +204,7 @@ class JobManager:
             if mode not in {"selection_only", "mock", "openai"}:
                 raise ValueError("Unsupported VLM mode")
             if mode == "mock" and job.config.get("index_qdrant"):
-                collection = str(job.config.get("collection_name", ""))
+                collection = settings.collection_name
                 if not (
                     collection.startswith("debug_") or collection.startswith("mock_")
                 ):
@@ -232,6 +236,14 @@ class JobManager:
             self._write_artifacts(job)
             self._event(job, pipeline_status)
         except Exception as exc:
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.stage = "cancelled"
+                job.finished_at = time.time()
+                job.report = {**job.report, "status": "cancelled"}
+                self._write_artifacts(job)
+                self._event(job, "cancelled")
+                return
             job.status = "failed"
             job.stage = "failed"
             job.finished_at = time.time()
@@ -257,7 +269,7 @@ class JobManager:
             window_seconds=float(c.get("window_seconds", 10)),
             stride_seconds=float(c.get("stride_seconds", 5)),
             device=str(c.get("device", "cpu")),
-            collection_name=str(c.get("collection_name", "video_windows")),
+            collection_name=str(c.get("collection_name", base.collection_name)),
             vlm_visual_change_threshold=float(
                 c.get("visual_threshold", base.vlm_visual_change_threshold)
             ),
@@ -356,6 +368,8 @@ class JobManager:
                 )
 
         class SelectionVLM:
+            disabled = True
+
             def describe(self, path, window):
                 check()
                 return VLMDescription(confidence=1)
@@ -408,12 +422,30 @@ class JobManager:
                 settings.batch_size,
             )
             store = TeeStore(memory, index_store)
+        def progress(stage, fraction, current_window, total_windows):
+            job.stage = stage
+            job.progress = max(job.progress, min(float(fraction), 1.0))
+            job.current_window = int(current_window)
+            job.total_windows = int(total_windows)
+
         job.stage = "model_processing"
         report = ProcessingPipeline(
-            transcriber, visual, audio, text, vlm, store, settings
+            transcriber,
+            visual,
+            audio,
+            text,
+            vlm,
+            store,
+            settings,
+            progress_callback=progress,
         ).process_video(job.video_path)
         records = memory.records
         job.total_windows = report.total_windows
+        qdrant_errors = {
+            window_id
+            for window_id, message in report.errors.items()
+            if message.startswith("Qdrant upsert failed:")
+        }
         for payload, vectors in records:
             diagnostics = {
                 name: _vector_summary(getattr(vectors, name))
@@ -429,6 +461,7 @@ class JobManager:
             job.windows.append(
                 {
                     "index": int(payload.window_id.rsplit("_", 1)[1]),
+                    "video_id": payload.video_id,
                     "window_id": payload.window_id,
                     "start": payload.start,
                     "end": payload.end,
@@ -438,10 +471,17 @@ class JobManager:
                     "selection_reasons": payload.selection_reasons,
                     "vlm_call_state": payload.vlm_call_state,
                     "caption": payload.caption,
+                    "has_audio": payload.has_audio,
                     "provenance": provenance,
                     "confidence": payload.caption_confidence,
-                    "indexed": bool(job.config.get("index_qdrant")),
+                    "indexed": bool(job.config.get("index_qdrant"))
+                    and payload.window_id not in qdrant_errors,
                     "point_id": deterministic_point_id(payload.window_id),
+                    "stored_payload": {
+                        key: value
+                        for key, value in payload.model_dump().items()
+                        if key != "source_path"
+                    },
                     "vectors": diagnostics,
                     "cache": {"pipeline": "newly_computed"},
                     "openai": openai_debug.get(int(payload.window_id.rsplit("_", 1)[1]))

@@ -1,5 +1,15 @@
 from dataclasses import dataclass, field
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+# Keep local configuration optional and explicit.  Real environment values
+# remain authoritative because load_dotenv never overrides them by default.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(_PROJECT_ROOT / ".env.processing")
+load_dotenv(_PROJECT_ROOT / ".env")
 
 
 @dataclass(frozen=True)

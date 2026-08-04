@@ -1,1 +1,9 @@
-import Link from "next/link";export function JobNav({id}:{id:string}){return <div className="actions panel"><Link href={`/processing/${id}`}>Overview</Link><Link href={`/processing/${id}/windows`}>Windows</Link><Link href={`/processing/${id}/timeline`}>Timeline</Link></div>}
+import Link from "next/link";
+
+export function JobNav({ id }: { id: string }) {
+  return <nav className="actions" aria-label="Job navigation">
+    <Link className="button secondary" href={`/processing/${id}`}>Overview</Link>
+    <Link className="button secondary" href={`/processing/${id}/windows`}>Windows</Link>
+    <Link className="button secondary" href={`/processing/${id}/timeline`}>Timeline</Link>
+  </nav>;
+}
