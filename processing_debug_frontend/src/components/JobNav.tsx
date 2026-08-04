@@ -1,0 +1,1 @@
+import Link from "next/link";export function JobNav({id}:{id:string}){return <div className="actions panel"><Link href={`/processing/${id}`}>Overview</Link><Link href={`/processing/${id}/windows`}>Windows</Link><Link href={`/processing/${id}/timeline`}>Timeline</Link></div>}
