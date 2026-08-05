@@ -1,0 +1,74 @@
+{
+  "examples": [
+    {
+      "example_id": "ex-0001",
+      "source_video_id": "REPLACE_WITH_REAL_VIDEO_ID_1",
+      "split_group": "dev",
+      "window": {"start_s": 0.0, "end_s": 30.0},
+      "queries": [
+        {"text": "a red car driving down the street", "language": "en", "script": "Latn", "origin": "human"},
+        {"text": "car speeding on a road", "language": "en", "script": "Latn", "origin": "synthetic"}
+      ],
+      "labels": {
+        "relevant": true,
+        "event_start_s": 4.5,
+        "event_end_s": 9.0,
+        "observed_actions": ["car enters frame", "car accelerates"],
+        "confidence": 0.9
+      },
+      "metadata": {"domain": "road", "day_night": "day", "has_audio": true}
+    },
+    {
+      "example_id": "ex-0002",
+      "source_video_id": "REPLACE_WITH_REAL_VIDEO_ID_1",
+      "split_group": "dev",
+      "window": {"start_s": 30.0, "end_s": 60.0},
+      "queries": [
+        {"text": "glass breaking sound", "language": "en", "script": "Latn", "origin": "human"}
+      ],
+      "labels": {
+        "relevant": true,
+        "event_start_s": 41.0,
+        "event_end_s": 43.5,
+        "observed_actions": ["glass shatters"],
+        "confidence": 0.75
+      },
+      "metadata": {"domain": "retail", "day_night": "night", "has_audio": true}
+    },
+    {
+      "example_id": "ex-0003",
+      "source_video_id": "REPLACE_WITH_REAL_VIDEO_ID_2",
+      "split_group": "test",
+      "window": {"start_s": 0.0, "end_s": 20.0},
+      "queries": [
+        {"text": "कोई गाड़ी चला रही है", "language": "hi", "script": "Deva", "origin": "human"}
+      ],
+      "labels": {
+        "relevant": true,
+        "event_start_s": 2.0,
+        "event_end_s": 7.0,
+        "observed_actions": ["car drives past"],
+        "confidence": 0.6
+      },
+      "metadata": {"domain": "road", "day_night": "day", "has_audio": false}
+    },
+    {
+      "example_id": "ex-0004",
+      "source_video_id": "REPLACE_WITH_REAL_VIDEO_ID_2",
+      "split_group": "test",
+      "window": {"start_s": 20.0, "end_s": 40.0},
+      "queries": [
+        {"text": "a dog barking near a fence", "language": "en", "script": "Latn", "origin": "human"}
+      ],
+      "labels": {
+        "relevant": false,
+        "event_start_s": 25.0,
+        "event_end_s": 28.0,
+        "observed_actions": [],
+        "confidence": 0.4,
+        "reason": "similar activity: a cat is present, not a dog, and there is no barking"
+      },
+      "metadata": {"domain": "outdoor", "day_night": "day", "has_audio": true}
+    }
+  ]
+}

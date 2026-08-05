@@ -1,0 +1,104 @@
+# Versioned evaluation defaults for post_training/evaluate/run_baseline.py.
+#
+# Every value below was found in the existing pipeline, not guessed. See the
+# "provenance" comment on each key for the exact source. One value could NOT
+# be found as a fixed constant in the codebase — see rrf_modality_weights.
+config_version: 1
+
+retrieval:
+  # query_retrieval/config.py: DEFAULT_TOP_K = _int("DEFAULT_TOP_K", 15)
+  # Per-modality candidate depth fetched from Qdrant before RRF fusion.
+  default_top_k_per_modality: 15
+
+  # query_retrieval/config.py: RRF_K = _int("RRF_K", 60)
+  # Reciprocal Rank Fusion constant, consumed by fusion.py's rrf_fuse().
+  rrf_k: 60
+
+  # query_retrieval/models.py: SearchRequest.top_k default = 10
+  # Also post_training/evaluate/run_baseline.py TOP_K.
+  top_k: 10
+
+  # NOT a fixed constant in the codebase — reporting this rather than
+  # guessing, per instructions:
+  #   - When query decomposition is DISABLED (query_retrieval/api.py calls
+  #     fusion.rrf_fuse(modality_hits, weights=weights) with weights=None
+  #     whenever no DecompositionResult is produced), fusion.py treats every
+  #     modality as weight 1.0 (see fusion.py line ~60:
+  #     `modality_weight = 1.0 if weights is None else weights.get(...)`).
+  #     This is effectively equal, unweighted RRF across visual/audio/
+  #     speech/caption.
+  #   - When query decomposition IS enabled (query_retrieval/config.py:
+  #     ENABLE_QUERY_DECOMPOSITION, default depends on whether GROQ_API_KEY
+  #     is set), weights are produced per-query by an LLM call
+  #     (query_retrieval/decomposition.py) and therefore vary per query —
+  #     there is no single fixed weight vector to record here.
+  #   - The only static fallback value is decomposition.py's degenerate/
+  #     error-path default: equal 0.25 weight for all four modalities
+  #     (query_retrieval/decomposition.py, `weights={m: 0.25 for m in
+  #     MODALITIES}`), used only if decomposition itself fails.
+  rrf_modality_weights_fallback:
+    visual: 0.25
+    audio: 0.25
+    speech: 0.25
+    caption: 0.25
+
+evaluation:
+  # post_training/evaluate/run_baseline.py RECALL_KS.
+  recall_at_k: [1, 5, 10]
+
+  # post_training/evaluate/run_baseline.py MRR_K.
+  mrr_at_k: 10
+
+  # post_training/evaluate/metrics.py ndcg_at_k(). Not present anywhere in
+  # the existing pipeline as a fixed constant (query_retrieval/reranking.py's
+  # calculate_ranking_metrics() takes k as a caller-supplied parameter, not a
+  # module default) — 10 is chosen only to match recall/MRR's existing @10
+  # convention above.
+  ndcg_at_k: 10
+
+  # post_training/evaluate/metrics.py temporal_iou(): a retrieved
+  # window counts as a hit for Recall/MRR purposes if IoU with the labeled
+  # event window is strictly greater than this threshold. This was an
+  # implicit choice in run_baseline.py (`> 0.0`, i.e. any overlap at all),
+  # not a value found elsewhere in the codebase — flagging it as the one
+  # threshold you may want to tighten (e.g. to 0.3 or 0.5) once you have
+  # real labeled data and can see how noisy "any overlap" is in practice.
+  iou_hit_threshold: 0.0
+
+# Bounds for post_training/serve/reranker_guard.py, which wraps a reranker
+# call before it can be wired into query_retrieval/api.py. The existing
+# reranker (query_retrieval/reranking.py:rerank_candidates(), called from
+# query_retrieval/api.py:_rerank_api_candidates()) already bounds candidate
+# count and frame count itself — see reranker_guard.py's module docstring
+# for exact line references. max_candidates/max_frames below match those
+# existing defaults for continuity. max_frame_bytes, timeout_seconds, and
+# max_concurrency have NO equivalent anywhere in the existing pipeline (no
+# byte-size cap, no per-call timeout, no concurrency limit exist today) —
+# these three are new values introduced here, not values found in the
+# codebase. Flagging that explicitly rather than presenting them as if they
+# came from somewhere else.
+reranker_guard:
+  # query_retrieval/reranking.py: RerankOptions.candidate_limit default = 30
+  # (hard ceiling MAX_RERANK_CANDIDATES = 100).
+  max_candidates: 30
+
+  # query_retrieval/reranking.py: RerankOptions.max_frames default = 8
+  # (hard ceiling MAX_RERANK_FRAMES = 16).
+  max_frames: 8
+
+  # NEW - no equivalent bound exists in query_retrieval/reranking.py today.
+  # 2 MB is a conservative ceiling for one base64/data-URL-encoded JPEG
+  # frame at the resolutions this pipeline samples.
+  max_frame_bytes: 2000000
+
+  # NEW - no per-call timeout exists in rerank_candidates() today; a hanging
+  # adapter.score() call currently blocks the request indefinitely. 10s
+  # matches the order of magnitude of query_retrieval/config.py's existing
+  # QDRANT_TIMEOUT_SECONDS default (10.0), for consistency, not because it
+  # is the same measured value.
+  timeout_seconds: 10.0
+
+  # NEW - the existing reranker loop is a plain serial for-loop with no
+  # concurrency control at all. 4 is an arbitrary conservative starting
+  # point, not a measured value.
+  max_concurrency: 4
