@@ -79,6 +79,54 @@ def _search(vector_name: str, vector: list[float], top_k: int) -> list[dict]:
     ]
 
 
+def validate_collection_schema(client: QdrantClient | None = None) -> list[str]:
+    """Compare the live Qdrant collection against the config.VECTOR_CONFIG
+    contract (vector names, dims, distance metric).
+
+    Returns a list of human-readable mismatch descriptions; an empty list
+    means the schema matches. Point this at a teammate's real collection
+    once it exists to catch drift (renamed vector, wrong dim, wrong
+    distance) at integration time instead of mid-demo. Never raises -
+    a connection or missing-collection failure is itself reported as an
+    issue string, not an exception.
+    """
+    client = client or connect_qdrant()
+    issues: list[str] = []
+
+    try:
+        if not client.collection_exists(config.COLLECTION_NAME):
+            return [f"collection '{config.COLLECTION_NAME}' does not exist"]
+        info = client.get_collection(config.COLLECTION_NAME)
+    except Exception as exc:  # noqa: BLE001 - report connection failure as a finding, not a crash
+        return [f"could not fetch collection info: {exc}"]
+
+    live_vectors = info.config.params.vectors
+    if not isinstance(live_vectors, dict):
+        return [
+            "collection has an unnamed single vector, expected named vectors: "
+            + ", ".join(config.VECTOR_NAMES)
+        ]
+
+    for name, expected in config.VECTOR_CONFIG.items():
+        live = live_vectors.get(name)
+        if live is None:
+            issues.append(f"missing expected vector '{name}'")
+            continue
+        if live.size != expected["dim"]:
+            issues.append(f"vector '{name}' dim mismatch: expected {expected['dim']}, got {live.size}")
+        live_distance = getattr(live.distance, "value", str(live.distance))
+        if live_distance.lower() != str(expected["distance"]).lower():
+            issues.append(
+                f"vector '{name}' distance mismatch: expected {expected['distance']}, got {live_distance}"
+            )
+
+    for name in live_vectors:
+        if name not in config.VECTOR_CONFIG:
+            issues.append(f"unexpected extra vector '{name}' present in collection (not in contract)")
+
+    return issues
+
+
 def search_visual(vector: list[float], top_k: int = config.DEFAULT_TOP_K) -> list[dict]:
     return _search("visual", vector, top_k)
 

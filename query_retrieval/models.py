@@ -29,7 +29,7 @@ class SearchHit(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str
-    top_k: int = Field(default=10, gt=0, le=100)
+    top_k: int = Field(default=10, ge=0, le=10000)
 
 
 class SearchResultItem(BaseModel):
@@ -46,3 +46,25 @@ class SearchResultItem(BaseModel):
 class SearchResponse(BaseModel):
     results: list[SearchResultItem]
     query_weights: dict[str, float]
+
+
+class FusedHit(BaseModel):
+    """Result of weighted RRF fusion across modality search results."""
+
+    window_id: str
+    fused_score: float
+    payload: WindowPayload
+    matched_modalities: list[str]
+
+
+class MergedRegion(BaseModel):
+    """One or more overlapping/adjacent same-video FusedHits merged into a
+    single candidate region."""
+
+    video_id: str
+    start: float
+    end: float
+    fused_score: float
+    payload: WindowPayload
+    matched_modalities: list[str]
+    source_window_ids: list[str]

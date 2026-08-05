@@ -62,3 +62,8 @@ CLAP_MODEL_NAME: str = os.getenv("CLAP_MODEL_NAME", "laion/clap-htsat-unfused")
 # one shared encoder instance, called twice with different query text roles;
 # not two separate models.
 BGE_M3_MODEL_NAME: str = os.getenv("BGE_M3_MODEL_NAME", "BAAI/bge-m3")
+
+# --- Window merging (Phase 5) ---
+# Two same-video windows merge if they overlap in time, or the gap between
+# one's end and the next's start is <= this many seconds.
+MERGE_GAP_SECONDS: float = float(os.getenv("MERGE_GAP_SECONDS", "5.0"))
