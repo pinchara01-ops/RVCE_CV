@@ -23,6 +23,11 @@ export function Nav() {
     navigate('/upload')
   }
 
+  const goTests = (e: React.MouseEvent) => {
+    e.preventDefault()
+    navigate('/tests')
+  }
+
   return (
     <nav className="relative z-20 pl-6 pr-6 py-6">
       <div className="mx-auto flex max-w-5xl items-center justify-between rounded-full px-6 py-3">
@@ -46,6 +51,15 @@ export function Nav() {
             }`}
           >
             Upload
+          </a>
+          <a
+            href="/tests"
+            onClick={goTests}
+            className={`text-sm font-medium transition-colors hover:text-white ${
+              pathname === '/tests' ? 'text-white' : 'text-white/80'
+            }`}
+          >
+            Tests
           </a>
         </div>
       </div>
