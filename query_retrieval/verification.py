@@ -1,6 +1,7 @@
-"""Text-only candidate verification via Gemini: given a retrieved
-candidate's transcript/caption/matched_modalities and a query's required
-conditions, check whether the evidence actually supports the match.
+"""Text-only candidate verification via Groq (openai/gpt-oss-20b): given a
+retrieved candidate's transcript/caption/matched_modalities and a query's
+required conditions, check whether the evidence actually supports the
+match.
 
 This is deliberately TEXT-ONLY. There is no frame/video-access field on
 the payload schema today (see README "Known blockers for future work") -
@@ -9,7 +10,7 @@ against exactly the text evidence the pipeline already has (transcript,
 caption, matched_modalities) and nothing else.
 
 Every call is hard-timeout bounded (VERIFICATION_TIMEOUT_SECONDS, default
-2.0s - see gemini_client.call_with_hard_timeout) and every failure mode
+2.0s - see groq_client.call_with_hard_timeout) and every failure mode
 (timeout, malformed JSON, no key, flag off) collapses to exactly one
 state: "verification_unavailable". This is a hard requirement, not a
 convenience - a verification check that silently became a false "match"
@@ -18,7 +19,7 @@ test_verification.py::test_forced_failure_never_produces_false_positive_match.
 """
 import logging
 
-from query_retrieval import config, gemini_client
+from query_retrieval import config, groq_client
 from query_retrieval.models import SearchResultItem, VerificationResult
 
 logger = logging.getLogger(__name__)
@@ -51,17 +52,13 @@ def _build_prompt(candidate: SearchResultItem, original_query: str, required_con
 
 
 def _live_verify(candidate: SearchResultItem, original_query: str, required_conditions: list[str]) -> dict:
-    client = gemini_client.get_client()
+    client = groq_client.get_client()
 
     def _call() -> str:
-        response = client.models.generate_content(
-            model=config.GEMINI_MODEL,
-            contents=_build_prompt(candidate, original_query, required_conditions),
-        )
-        return response.text
+        return groq_client.chat_completion(client, _build_prompt(candidate, original_query, required_conditions))
 
-    raw = gemini_client.call_with_hard_timeout(_call, config.VERIFICATION_TIMEOUT_SECONDS)
-    parsed = gemini_client.parse_json_response(raw)
+    raw = groq_client.call_with_hard_timeout(_call, config.VERIFICATION_TIMEOUT_SECONDS)
+    parsed = groq_client.parse_json_response(raw)
 
     if "match" not in parsed:
         raise ValueError("verification response missing 'match' field")
@@ -90,12 +87,12 @@ def verify_candidate(
             reason="verification disabled (ENABLE_VERIFICATION=false)",
         )
 
-    if not config.GEMINI_API_KEY:
+    if not config.GROQ_API_KEY:
         logger.info("Verification tier=unavailable candidate=%s reason=no_api_key", candidate.window_id)
         return VerificationResult(
             candidate_id=candidate.window_id,
             state="verification_unavailable",
-            reason="GEMINI_API_KEY not configured",
+            reason="GROQ_API_KEY not configured",
         )
 
     try:

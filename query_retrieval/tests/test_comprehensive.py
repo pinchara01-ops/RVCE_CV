@@ -53,7 +53,7 @@ def _fake_encode_query(query: str) -> dict[str, list[float]]:
 @pytest.fixture
 def client(monkeypatch):
     # Decomposition/verification pinned off: this file tests the
-    # pre-decomposition pipeline, and a real GEMINI_API_KEY being present
+    # pre-decomposition pipeline, and a real GROQ_API_KEY being present
     # must not silently flip these tests onto the decomposition path
     # (which defaults on when a key exists - see config.py).
     monkeypatch.setattr(encoders, "warmup", lambda: None)

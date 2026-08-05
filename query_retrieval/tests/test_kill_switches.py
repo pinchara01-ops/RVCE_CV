@@ -1,5 +1,5 @@
 """Kill-switch verification: each LLM-touching feature must degrade to
-exactly today's tested behavior when its flag is off, and GEMINI_API_KEY
+exactly today's tested behavior when its flag is off, and GROQ_API_KEY
 being entirely unset must result in zero network call attempts. These are
 explicit, runnable regression tests - not just claims - see README's
 "Kill switch reference" table for the human-readable summary.
@@ -27,10 +27,10 @@ def _hit(window_id, video_id="video_a", start=0.0, end=5.0):
     }
 
 
-def _never_call_gemini(monkeypatch):
+def _never_call_groq(monkeypatch):
     def _boom():
-        raise AssertionError("gemini_client.get_client() should not have been called - zero network calls expected")
-    monkeypatch.setattr("query_retrieval.gemini_client.get_client", lambda: _boom())
+        raise AssertionError("groq_client.get_client() should not have been called - zero network calls expected")
+    monkeypatch.setattr("query_retrieval.groq_client.get_client", lambda: _boom())
 
 
 # --- 1. ENABLE_QUERY_DECOMPOSITION=false: /search is score-identical to the pre-decomposition baseline ---
@@ -137,14 +137,14 @@ def test_verification_on_health_reports_verification_enabled(monkeypatch):
     assert resp.json()["verification_enabled"] is True
 
 
-# --- 3. GEMINI_API_KEY unset: zero network calls attempted, both features fall back ---
+# --- 3. GROQ_API_KEY unset: zero network calls attempted, both features fall back ---
 
 
 def test_no_api_key_decomposition_falls_back_with_zero_network_calls(monkeypatch):
     monkeypatch.setattr(decomposition, "_cache", {})
-    monkeypatch.setattr(config, "GEMINI_API_KEY", None)
+    monkeypatch.setattr(config, "GROQ_API_KEY", None)
     monkeypatch.setattr(config, "ENABLE_QUERY_DECOMPOSITION", True)  # even if "on", no key means no attempt
-    _never_call_gemini(monkeypatch)
+    _never_call_groq(monkeypatch)
 
     result = decomposition.decompose_query("a totally new uncached query")
 
@@ -152,9 +152,9 @@ def test_no_api_key_decomposition_falls_back_with_zero_network_calls(monkeypatch
 
 
 def test_no_api_key_verification_unavailable_with_zero_network_calls(monkeypatch):
-    monkeypatch.setattr(config, "GEMINI_API_KEY", None)
+    monkeypatch.setattr(config, "GROQ_API_KEY", None)
     monkeypatch.setattr(config, "ENABLE_VERIFICATION", True)
-    _never_call_gemini(monkeypatch)
+    _never_call_groq(monkeypatch)
 
     candidate = SearchResultItem(
         video_id="v", window_id="w1", start=0.0, end=1.0, transcript="", caption="",
