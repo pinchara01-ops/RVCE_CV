@@ -78,6 +78,24 @@ h3 { font-size: 15px; }
 .field { display: grid; gap: 6px; color: var(--ink); font-size: 13px; font-weight: 650; }
 .field span { color: var(--muted); font-size: 12px; font-weight: 400; }
 .field-wide { grid-column: span 2; }
+.profile-choice { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.profile-option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 11px; min-height: 108px; padding: 15px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+.profile-option.selected { border-color: var(--accent); background: oklch(0.96 0.014 238); box-shadow: inset 0 0 0 1px oklch(0.70 0.07 238 / 0.45); }
+.profile-option input { width: 17px; height: 17px; margin-top: 2px; }
+.profile-option > span { display: grid; gap: 4px; min-width: 0; }
+.profile-option strong { font-size: 15px; }
+.profile-option small, .profile-option code { color: var(--muted); font-size: 12px; font-weight: 400; }
+.profile-option code { overflow-wrap: anywhere; }
+.runtime-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0 0 18px; padding: 13px 15px; border: 1px solid oklch(0.80 0.028 238); background: oklch(0.955 0.018 238); font-size: 13px; }
+.runtime-summary strong { grid-row: span 2; color: var(--accent-strong); }
+.runtime-summary span { color: var(--muted); }
+.provider-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
+.provider-grid .field { align-content: start; }
+.provider-grid select + select, .provider-grid select + input { margin-top: 2px; }
+.provider-note, .runtime-message { margin: 18px 0 0; color: var(--muted); font-size: 13px; }
+.runtime-message { padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--surface-muted); }
+.consent { display: flex; gap: 10px; align-items: flex-start; margin-top: 18px; padding: 13px 15px; border: 1px solid oklch(0.78 0.09 76); background: oklch(0.97 0.025 76); font-size: 13px; }
+.consent input { flex: 0 0 auto; width: 17px; height: 17px; margin-top: 2px; }
 .index-choice { display: flex; align-items: end; gap: 22px; margin-top: 18px; }
 .index-choice > label:first-child { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; font-weight: 650; }
 .index-choice input[type="checkbox"] { width: 16px; height: 16px; }
@@ -160,13 +178,47 @@ video { width: 100%; max-height: 510px; border-radius: 7px; background: oklch(0.
 .result-body summary { cursor: pointer; color: var(--accent); font-weight: 700; }
 .result-body dl { margin-top: 10px; }
 
+/* Architecture setup is intentionally a diagram of actual bounded stages,
+   rather than a decorative overview.  Its cards reuse the product form
+   vocabulary so the selected model is usable straight away. */
+.architecture-page .lede { margin-bottom: 34px; }
+.architecture-form { border-top: 1px solid var(--line); }
+.architecture-section { padding: 30px 0; border-bottom: 1px solid var(--line); }
+.architecture-source, .architecture-vector-store, .architecture-storage { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 16px; align-items: start; padding: 18px; border: 1px solid var(--line); background: var(--surface); }
+.architecture-source p, .architecture-vector-store p, .architecture-storage p, .architecture-stage p { color: var(--muted); font-size: 13px; }
+.architecture-source p, .architecture-vector-store p, .architecture-storage p { margin-bottom: 0; }
+.architecture-number { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; color: var(--accent-strong); background: oklch(0.94 0.025 238); font: 700 12px "SFMono-Regular", Consolas, monospace; }
+.architecture-arrow { display: grid; place-items: center; min-height: 32px; color: var(--accent); font-size: 24px; line-height: 1; }
+.architecture-split { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.architecture-stage { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 17px; border: 1px solid var(--line); background: var(--surface); }
+.architecture-stage h3 { margin: 0; font-size: 16px; letter-spacing: -0.015em; }
+.architecture-stage p { margin: 0; }
+.architecture-kicker { margin: 0; color: var(--accent-strong) !important; font-size: 11px !important; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; }
+.architecture-output { display: inline-flex; align-self: start; margin-top: 2px; border: 1px solid oklch(0.81 0.026 238); border-radius: 999px; padding: 3px 8px; color: oklch(0.39 0.07 238); background: oklch(0.94 0.025 238); font: 11px "SFMono-Regular", Consolas, monospace; }
+.architecture-secret { margin-top: 2px; }
+.architecture-key-note { margin-top: 2px !important; font-size: 11px !important; }
+.architecture-vector-list { display: flex; flex-wrap: wrap; gap: 5px; align-self: center; }
+.architecture-vector-list span { border: 1px solid oklch(0.81 0.026 238); border-radius: 999px; padding: 3px 7px; color: oklch(0.39 0.07 238); background: oklch(0.94 0.025 238); font: 11px "SFMono-Regular", Consolas, monospace; }
+.architecture-storage { grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr); margin: 28px 0 0; border-color: oklch(0.80 0.028 238); background: oklch(0.985 0.007 238); }
+.architecture-storage-copy h2 { margin-bottom: 7px; }
+.architecture-storage-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+.architecture-query-flow, .architecture-precision-flow { display: grid; grid-template-columns: minmax(210px, 0.9fr) 36px minmax(210px, 1fr) 36px minmax(210px, 0.9fr); align-items: stretch; gap: 0; }
+.architecture-precision-flow { grid-template-columns: minmax(250px, 1fr) 36px minmax(250px, 1fr); max-width: 820px; margin: 0 auto; }
+.architecture-arrow-horizontal { min-height: auto; align-self: center; }
+.architecture-static-stage { min-height: 230px; }
+.architecture-guardrail { display: block; color: oklch(0.44 0.10 76); font-size: 12px; }
+.architecture-reranker { border-color: oklch(0.78 0.09 76); background: oklch(0.98 0.017 76); }
+.architecture-readiness { padding-top: 9px; border-top: 1px solid oklch(0.84 0.06 76); font-size: 12px !important; }
+.architecture-message { margin: 22px 0 0; padding: 12px 14px; border: 1px solid oklch(0.75 0.07 154); color: oklch(0.34 0.09 154); background: oklch(0.96 0.02 154); }
+.architecture-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+
 @media (max-width: 760px) {
   .app-header { gap: 16px; padding: 0 18px; }
   .header-note { display: none; }
   .app-header nav { gap: 12px; }
   main { padding: 30px 18px 56px; }
   .page-heading, .status-strip, .section-heading { align-items: flex-start; flex-direction: column; }
-  .field-grid, .field-grid.compact, .video-inspector, .split-view, .result-body { grid-template-columns: 1fr; }
+  .field-grid, .field-grid.compact, .provider-grid, .profile-choice, .video-inspector, .split-view, .result-body, .architecture-split, .architecture-storage, .architecture-storage-fields, .architecture-query-flow, .architecture-precision-flow { grid-template-columns: 1fr; }
   .field-wide { grid-column: auto; }
   .index-choice { align-items: stretch; flex-direction: column; }
   .model-row { grid-template-columns: 1fr; gap: 4px; }
@@ -174,4 +226,7 @@ video { width: 100%; max-height: 510px; border-radius: 7px; background: oklch(0.
   .workflow-list li { grid-template-columns: 48px 1fr; }
   .diagnostic-latest { grid-template-columns: 1fr; gap: 5px; }
   .diagnostic-row { grid-template-columns: 68px 58px minmax(0, 1fr); gap: 8px; }
+  .architecture-source, .architecture-vector-store { grid-template-columns: auto minmax(0, 1fr); }
+  .architecture-source .architecture-output, .architecture-vector-store .architecture-vector-list { grid-column: 2; }
+  .architecture-arrow-horizontal { min-height: 32px; transform: rotate(90deg); }
 }
