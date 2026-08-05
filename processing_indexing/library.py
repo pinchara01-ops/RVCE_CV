@@ -6,19 +6,186 @@ filesystem paths server-side.
 """
 from __future__ import annotations
 
+import json
 import math
 import os
+import threading
 import time
 from collections import defaultdict
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from .config import Settings
 from .models import VECTOR_DIMS
+from .profile_qdrant_store import ensure_window_payload_indexes
+from .runtime_profiles import redact_secrets
+
+
+_LIBRARY_READ_ATTEMPTS = 3
+_LIBRARY_READ_TIMEOUT_SECONDS = 4.0
+_LIBRARY_DIAGNOSTICS_FILENAME = "_library_diagnostics.jsonl"
+_LIBRARY_DIAGNOSTICS_MAX_BYTES = 1_000_000
+_LIBRARY_DIAGNOSTICS_LOCK = threading.Lock()
+_Result = TypeVar("_Result")
+
+
+class LibraryReadError(RuntimeError):
+    """A safe, actionable error from a persistent-library Qdrant read."""
+
+    def __init__(
+        self,
+        *,
+        operation: str,
+        attempts: int,
+        error_type: str,
+        message: str,
+    ) -> None:
+        self.operation = operation
+        self.attempts = attempts
+        self.error_type = error_type
+        self.safe_message = message
+        label = operation.replace("_", " ")
+        super().__init__(
+            f"Qdrant {label} did not complete after {attempts} attempts "
+            f"({error_type}): {message}. Review Library diagnostics and retry."
+        )
+
+
+def _library_diagnostics_path() -> Path:
+    jobs_root = Path(os.getenv("PROCESSING_JOBS_DIR", "processing_jobs")).resolve()
+    return jobs_root / _LIBRARY_DIAGNOSTICS_FILENAME
+
+
+def _safe_library_error(settings: Settings, error: Exception) -> str:
+    """Never persist or return a Qdrant key contained in a client exception."""
+
+    text = f"{type(error).__name__}: {error}"
+    return str(redact_secrets(text, (settings.qdrant_api_key or "",)))
+
+
+def _library_next_action(error: Exception) -> str:
+    text = f"{type(error).__name__}: {error}".lower()
+    if "timeout" in text or "timed out" in text or "connection" in text:
+        return "Qdrant did not respond in time. Check the active cluster and network, then retry."
+    if any(token in text for token in ("unauthorized", "forbidden", "api key", "authentication")):
+        return "Check the Qdrant Cloud API key in Architecture, then reconnect the API-based session."
+    return "Review this safe diagnostic, confirm the selected profile and collection, then retry."
+
+
+def _record_library_diagnostic(
+    *,
+    settings: Settings,
+    operation: str,
+    status: str,
+    attempt: int,
+    attempts: int,
+    error: Exception,
+    elapsed_ms: int,
+) -> None:
+    """Append a bounded, redacted record that survives a browser refresh.
+
+    Indexing artifacts already live under each job. This separate log covers
+    later Library reads, whose failures previously vanished behind a generic
+    HTTP 503 message.
+    """
+
+    diagnostic = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "operation": operation,
+        "status": status,
+        "attempt": attempt,
+        "attempts": attempts,
+        "collection_name": settings.collection_name,
+        "error_type": type(error).__name__,
+        "error": _safe_library_error(settings, error),
+        "elapsed_ms": elapsed_ms,
+        "next_action": _library_next_action(error),
+    }
+    path = _library_diagnostics_path()
+    try:
+        with _LIBRARY_DIAGNOSTICS_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists() and path.stat().st_size > _LIBRARY_DIAGNOSTICS_MAX_BYTES:
+                retained = path.read_text(encoding="utf-8").splitlines()[-250:]
+                path.write_text("\n".join(retained) + ("\n" if retained else ""), encoding="utf-8")
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(diagnostic, ensure_ascii=False) + "\n")
+    except OSError:
+        # Diagnostics must never turn a recoverable library read into an error.
+        pass
+
+
+def list_library_diagnostics(limit: int = 100) -> list[dict[str, Any]]:
+    """Return recent, already-redacted library-read diagnostics chronologically."""
+
+    path = _library_diagnostics_path()
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    records: list[dict[str, Any]] = []
+    for line in lines[-max(1, min(limit, 500)) :]:
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return records
+
+
+def _read_with_retries(
+    *,
+    settings: Settings,
+    operation: str,
+    action: Callable[[QdrantClient], _Result],
+) -> _Result:
+    """Run a read against fresh Qdrant clients, tolerating short Cloud stalls."""
+
+    last_error: Exception | None = None
+    for attempt in range(1, _LIBRARY_READ_ATTEMPTS + 1):
+        client: QdrantClient | None = None
+        started = time.perf_counter()
+        try:
+            client = _client(
+                replace(
+                    settings,
+                    qdrant_timeout_seconds=_read_timeout_seconds(settings),
+                )
+            )
+            return action(client)
+        except Exception as exc:  # noqa: BLE001 - translated below to a safe UI error
+            last_error = exc
+            _record_library_diagnostic(
+                settings=settings,
+                operation=operation,
+                status="retrying" if attempt < _LIBRARY_READ_ATTEMPTS else "failed",
+                attempt=attempt,
+                attempts=_LIBRARY_READ_ATTEMPTS,
+                error=exc,
+                elapsed_ms=round((time.perf_counter() - started) * 1000),
+            )
+        finally:
+            if client is not None:
+                _close_client(client)
+        if attempt < _LIBRARY_READ_ATTEMPTS:
+            time.sleep(0.2 * attempt)
+
+    assert last_error is not None
+    raise LibraryReadError(
+        operation=operation,
+        attempts=_LIBRARY_READ_ATTEMPTS,
+        error_type=type(last_error).__name__,
+        message=_safe_library_error(settings, last_error),
+    ) from last_error
 
 
 def _client(settings: Settings) -> QdrantClient:
@@ -32,6 +199,12 @@ def _client(settings: Settings) -> QdrantClient:
 def _health_timeout_seconds(settings: Settings) -> float:
     """Give a cold local Qdrant enough time without blocking the UI indefinitely."""
     return min(settings.qdrant_timeout_seconds, 5.0)
+
+
+def _read_timeout_seconds(settings: Settings) -> float:
+    """Keep a Library refresh responsive even if a Cloud node is unhealthy."""
+
+    return min(settings.qdrant_timeout_seconds, _LIBRARY_READ_TIMEOUT_SECONDS)
 
 
 def _health_client(settings: Settings) -> QdrantClient:
@@ -163,6 +336,16 @@ def collection_health(
             last_error = exc
             if attempt < 2:
                 time.sleep(0.2 * (attempt + 1))
+    if last_error is not None:
+        _record_library_diagnostic(
+            settings=settings,
+            operation="collection_health",
+            status="failed",
+            attempt=3,
+            attempts=3,
+            error=last_error,
+            elapsed_ms=0,
+        )
     return {
         "reachable": False,
         "collection_exists": False,
@@ -192,10 +375,10 @@ def list_windows(
     include_vectors: bool = False,
 ) -> list[dict[str, Any]]:
     settings = settings or Settings.from_env()
-    client = _client(settings)
-    try:
+    def read(client: QdrantClient) -> list[dict[str, Any]]:
         if not client.collection_exists(settings.collection_name):
             return []
+        ensure_window_payload_indexes(client, settings.collection_name)
         records, _ = client.scroll(
             collection_name=settings.collection_name,
             scroll_filter=_filter(video_id=video_id),
@@ -217,9 +400,19 @@ def list_windows(
                     if isinstance(values, list)
                 }
             result.append(entry)
-        return sorted(result, key=lambda row: (row["payload"].get("video_id", ""), row["payload"].get("start", 0)))
-    finally:
-        _close_client(client)
+        return sorted(
+            result,
+            key=lambda row: (
+                row["payload"].get("video_id", ""),
+                row["payload"].get("start", 0),
+            ),
+        )
+
+    return _read_with_retries(
+        settings=settings,
+        operation="indexed_windows",
+        action=read,
+    )
 
 
 def get_window(
@@ -229,10 +422,10 @@ def get_window(
     include_vectors: bool = False,
 ) -> dict[str, Any] | None:
     settings = settings or Settings.from_env()
-    client = _client(settings)
-    try:
+    def read(client: QdrantClient) -> dict[str, Any] | None:
         if not client.collection_exists(settings.collection_name):
             return None
+        ensure_window_payload_indexes(client, settings.collection_name)
         records, _ = client.scroll(
             collection_name=settings.collection_name,
             scroll_filter=_filter(window_id=window_id),
@@ -252,8 +445,12 @@ def get_window(
                 if isinstance(values, list)
             }
         return result
-    finally:
-        _close_client(client)
+
+    return _read_with_retries(
+        settings=settings,
+        operation="indexed_window",
+        action=read,
+    )
 
 
 def list_videos(settings: Settings | None = None, limit: int = 500) -> list[dict[str, Any]]:
@@ -286,10 +483,10 @@ def list_videos(settings: Settings | None = None, limit: int = 500) -> list[dict
 
 def media_path_for_window(window_id: str, settings: Settings | None = None) -> Path | None:
     settings = settings or Settings.from_env()
-    client = _client(settings)
-    try:
+    def read(client: QdrantClient) -> Path | None:
         if not client.collection_exists(settings.collection_name):
             return None
+        ensure_window_payload_indexes(client, settings.collection_name)
         records, _ = client.scroll(
             collection_name=settings.collection_name,
             scroll_filter=_filter(window_id=window_id),
@@ -300,5 +497,9 @@ def media_path_for_window(window_id: str, settings: Settings | None = None) -> P
         if not records:
             return None
         return media_path_for_source((records[0].payload or {}).get("source_path"))
-    finally:
-        _close_client(client)
+
+    return _read_with_retries(
+        settings=settings,
+        operation="indexed_media",
+        action=read,
+    )

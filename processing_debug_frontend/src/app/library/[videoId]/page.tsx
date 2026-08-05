@@ -1,9 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { API, IndexedWindow, RuntimeSession, jsonFetch, loadRuntimeSessionId } from "@/lib/api";
+import { LibraryDiagnostics } from "@/components/LibraryDiagnostics";
+import {
+  API,
+  IndexedWindow,
+  LibraryDiagnostic,
+  RuntimeSession,
+  apiErrorMessage,
+  jsonFetch,
+  loadRuntimeSessionId,
+} from "@/lib/api";
 
 export default function VideoLibraryPage() {
   return <Suspense fallback={<main className="page-loading">Loading indexed video…</main>}><VideoLibraryContent /></Suspense>;
@@ -27,6 +36,7 @@ function VideoLibraryContent() {
   const [selected, setSelected] = useState<string>();
   const [selectedDetail, setSelectedDetail] = useState<IndexedWindow>();
   const [error, setError] = useState("");
+  const [diagnostics, setDiagnostics] = useState<LibraryDiagnostic[]>([]);
 
   useEffect(() => {
     if (!runtimeSessionId) return;
@@ -48,6 +58,15 @@ function VideoLibraryContent() {
     return () => { cancelled = true; window.clearTimeout(start); };
   }, [runtimeSessionId]);
 
+  const loadDiagnostics = useCallback(async () => {
+    try {
+      const result = await jsonFetch<{ diagnostics: LibraryDiagnostic[] }>("/api/diagnostics/library?limit=50");
+      setDiagnostics(result.diagnostics);
+    } catch {
+      // The original error remains more useful if the diagnostic endpoint is unavailable.
+    }
+  }, []);
+
   useEffect(() => {
     if (runtimeSessionState === "pending") return;
     if (runtimeSessionState === "missing" || (requestedProfileId === "api-gemini-free-v1" && !runtimeSession)) {
@@ -60,6 +79,7 @@ function VideoLibraryContent() {
       return () => window.clearTimeout(reset);
     }
     let cancelled = false;
+    setError("");
     // Loading every high-dimensional vector in a video makes the inspector
     // slow on a laptop. List the lightweight records first, then fetch the
     // selected record with its vector summaries below.
@@ -73,10 +93,13 @@ function VideoLibraryContent() {
         setSelectedDetail(undefined);
       })
       .catch((cause) => {
-        if (!cancelled) setError(String(cause));
+        if (!cancelled) {
+          setError(apiErrorMessage(cause));
+          void loadDiagnostics();
+        }
       });
     return () => { cancelled = true; };
-  }, [videoId, profileQuery, requestedProfileId, runtimeSession, runtimeSessionState]);
+  }, [videoId, profileQuery, requestedProfileId, runtimeSession, runtimeSessionState, loadDiagnostics]);
 
   useEffect(() => {
     if (!selected || runtimeSessionState === "pending" || runtimeSessionState === "missing") return;
@@ -88,10 +111,13 @@ function VideoLibraryContent() {
         if (!cancelled) setSelectedDetail(window);
       })
       .catch((cause) => {
-        if (!cancelled) setError(String(cause));
+        if (!cancelled) {
+          setError(apiErrorMessage(cause));
+          void loadDiagnostics();
+        }
       });
     return () => { cancelled = true; };
-  }, [selected, profileQuery, runtimeSessionState]);
+  }, [selected, profileQuery, runtimeSessionState, loadDiagnostics]);
 
   const listedActive = useMemo(
     () => windows.find((window) => window.payload.window_id === selected) ?? windows[0],
@@ -113,6 +139,7 @@ function VideoLibraryContent() {
         <Link className="secondary button" href={`/library${profileQueryPrefix}`}>Back to library</Link>
       </div>
       {error && <p className="error panel">{error}</p>}
+      <LibraryDiagnostics diagnostics={diagnostics} />
       {active && (
         <section className="video-inspector">
           <div className="video-stage">

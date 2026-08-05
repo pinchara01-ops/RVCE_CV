@@ -78,6 +78,8 @@ def test_health_probe_allows_a_slow_local_qdrant_response():
 
     assert library._health_timeout_seconds(Settings(qdrant_timeout_seconds=10)) == 5
     assert library._health_timeout_seconds(Settings(qdrant_timeout_seconds=3)) == 3
+    assert library._read_timeout_seconds(Settings(qdrant_timeout_seconds=10)) == 4
+    assert library._read_timeout_seconds(Settings(qdrant_timeout_seconds=3)) == 3
 
 
 def test_collection_health_closes_its_short_lived_probe_client(monkeypatch):
@@ -99,6 +101,106 @@ def test_collection_health_closes_its_short_lived_probe_client(monkeypatch):
 
     assert health["reachable"] is True
     assert client.closed is True
+
+
+def test_list_windows_retries_a_transient_qdrant_timeout(monkeypatch, tmp_path):
+    from processing_indexing import library
+
+    attempts = 0
+
+    class FlakyClient:
+        def collection_exists(self, _collection_name):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TimeoutError("timed out")
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setenv("PROCESSING_JOBS_DIR", str(tmp_path))
+    monkeypatch.setattr(library, "_client", lambda _settings: FlakyClient())
+    monkeypatch.setattr(library.time, "sleep", lambda _seconds: None)
+
+    assert library.list_windows(settings=Settings()) == []
+    assert attempts == 2
+
+
+def test_list_windows_repairs_missing_keyword_indexes_before_filtering(monkeypatch, tmp_path):
+    """Cloud Qdrant requires a keyword payload index for `video_id` filters."""
+
+    from processing_indexing import library
+
+    class CloudClient:
+        def __init__(self):
+            self.indexes = set()
+
+        def collection_exists(self, _collection_name):
+            return True
+
+        def create_payload_index(self, *, field_name, **_kwargs):
+            self.indexes.add(field_name)
+
+        def scroll(self, **_kwargs):
+            if "video_id" not in self.indexes:
+                raise RuntimeError("Index required but not found for video_id")
+            return [], None
+
+        def close(self):
+            pass
+
+    client = CloudClient()
+    monkeypatch.setenv("PROCESSING_JOBS_DIR", str(tmp_path))
+    monkeypatch.setattr(library, "_client", lambda _settings: client)
+
+    assert library.list_windows(settings=Settings(), video_id="video-a") == []
+    assert {"video_id", "window_id"}.issubset(client.indexes)
+
+
+def test_library_read_failure_is_persisted_without_the_api_key(monkeypatch, tmp_path):
+    from processing_indexing import library
+
+    class BrokenClient:
+        def collection_exists(self, _collection_name):
+            raise ConnectionError("authorization=qdrant-secret")
+
+        def close(self):
+            pass
+
+    monkeypatch.setenv("PROCESSING_JOBS_DIR", str(tmp_path))
+    monkeypatch.setattr(library, "_client", lambda _settings: BrokenClient())
+    monkeypatch.setattr(library.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(library.LibraryReadError):
+        library.list_windows(settings=Settings(qdrant_api_key="qdrant-secret"))
+
+    diagnostics = library.list_library_diagnostics()
+    assert diagnostics[-1]["operation"] == "indexed_windows"
+    assert diagnostics[-1]["status"] == "failed"
+    assert "qdrant-secret" not in json.dumps(diagnostics)
+
+
+def test_library_diagnostics_api_returns_only_the_safe_persisted_record(monkeypatch, tmp_path):
+    from processing_indexing import debug_api, library
+
+    monkeypatch.setenv("PROCESSING_JOBS_DIR", str(tmp_path))
+    settings = Settings(qdrant_api_key="qdrant-secret")
+    library._record_library_diagnostic(  # noqa: SLF001 - verifies the public API boundary
+        settings=settings,
+        operation="indexed_windows",
+        status="failed",
+        attempt=3,
+        attempts=3,
+        error=ConnectionError("authorization=qdrant-secret"),
+        elapsed_ms=12,
+    )
+
+    response = TestClient(debug_api.app).get("/api/diagnostics/library")
+
+    assert response.status_code == 200
+    assert response.json()["diagnostics"][-1]["operation"] == "indexed_windows"
+    assert "qdrant-secret" not in response.text
 
 
 def test_malformed_upload_has_an_actionable_recovery_message():

@@ -542,7 +542,7 @@ class JobManager:
         )
 
     def _execute_api_pipeline(self, job: Job, settings: Settings) -> None:
-        """Run the credential-private Gemini/Qdrant Cloud indexing profile.
+        """Run the credential-private Gemini/API indexing profile.
 
         This path is intentionally separate from ``_execute_pipeline``: it
         must never instantiate Whisper, X-CLIP, CLAP, BGE, or local Qdrant.
@@ -560,6 +560,8 @@ class JobManager:
         from .runtime_profiles import get_profile
 
         runtime = job.runtime_config()
+        vector_store_target = str(runtime.get("vector_store_target") or "cloud")
+        store_label = "Qdrant Cloud" if vector_store_target == "cloud" else "local Qdrant"
         profile = get_profile(str(runtime.get("runtime_profile_id")))
         providers = dict(runtime.get("providers") or {})
         unsupported = {
@@ -592,7 +594,7 @@ class JobManager:
             self._activity(
                 job,
                 "qdrant",
-                f"Qdrant Cloud confirmed {done}/{total} indexed windows",
+                f"{store_label} confirmed {done}/{total} indexed windows",
                 current_window=done,
                 total_windows=total,
                 collection=contract.collection_name,
@@ -620,7 +622,11 @@ class JobManager:
         if runtime.get("index_qdrant"):
             sink = make_profile_qdrant_sink(
                 qdrant_url=str(runtime.get("qdrant_url") or ""),
-                qdrant_api_key=str(runtime.get("qdrant_api_key") or ""),
+                qdrant_api_key=(
+                    str(runtime.get("qdrant_api_key") or "")
+                    if vector_store_target == "cloud"
+                    else None
+                ),
                 profile=profile,
                 timeout_seconds=settings.qdrant_timeout_seconds,
                 batch_size=settings.batch_size,
@@ -637,8 +643,9 @@ class JobManager:
         self._activity(
             job,
             "qdrant",
-            "Using the managed Qdrant Cloud profile collection",
+            f"Using the {store_label} profile collection",
             collection=contract.collection_name,
+            vector_store_target=vector_store_target,
             persistent=bool(sink),
         )
         bundle = build_gemini_api_pipeline(

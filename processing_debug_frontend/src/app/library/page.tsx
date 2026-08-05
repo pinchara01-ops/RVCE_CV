@@ -3,7 +3,17 @@
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { IndexHealth, IndexedVideo, RuntimeSession, jsonFetch, loadRuntimeSessionId } from "@/lib/api";
+import { LibraryDiagnostics } from "@/components/LibraryDiagnostics";
+import {
+  IndexHealth,
+  IndexedVideo,
+  LibraryDiagnostic,
+  RuntimeSession,
+  ApiError,
+  apiErrorMessage,
+  jsonFetch,
+  loadRuntimeSessionId,
+} from "@/lib/api";
 
 export default function LibraryPage() {
   return <Suspense fallback={<main className="page-loading">Loading library…</main>}><LibraryContent /></Suspense>;
@@ -25,6 +35,7 @@ function LibraryContent() {
   const [videos, setVideos] = useState<IndexedVideo[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [diagnostics, setDiagnostics] = useState<LibraryDiagnostic[]>([]);
   useEffect(() => {
     if (!runtimeSessionId) return;
     let cancelled = false;
@@ -44,6 +55,14 @@ function LibraryContent() {
     }, 0);
     return () => { cancelled = true; window.clearTimeout(start); };
   }, [runtimeSessionId]);
+  const loadDiagnostics = useCallback(async () => {
+    try {
+      const result = await jsonFetch<{ diagnostics: LibraryDiagnostic[] }>("/api/diagnostics/library?limit=50");
+      setDiagnostics(result.diagnostics);
+    } catch {
+      // The original error remains more useful if the diagnostic endpoint is unavailable.
+    }
+  }, []);
   const load = useCallback(async () => {
     if (runtimeSessionState === "pending") return;
     setLoading(true);
@@ -69,6 +88,10 @@ function LibraryContent() {
           lastError = new Error(nextHealth.error || "Qdrant is temporarily unavailable.");
         } catch (cause) {
           lastError = cause;
+          // The backend already made bounded Qdrant retry attempts and wrote
+          // a diagnostic. Surface that result promptly instead of making the
+          // user wait through another three identical browser retries.
+          if (cause instanceof ApiError) break;
         }
         if (attempt < 2) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, 1000 * (attempt + 1)));
@@ -78,11 +101,12 @@ function LibraryContent() {
       setHealth(nextHealth);
       setVideos(data.videos);
     } catch (cause) {
-      setError(String(cause));
+      setError(apiErrorMessage(cause));
+      void loadDiagnostics();
     } finally {
       setLoading(false);
     }
-  }, [profileQuery, requestedProfileId, runtimeSession, runtimeSessionState]);
+  }, [loadDiagnostics, profileQuery, requestedProfileId, runtimeSession, runtimeSessionState]);
   useEffect(() => {
     if (runtimeSessionState === "pending") return;
     const timer = window.setTimeout(() => { void load(); }, 0);
@@ -95,6 +119,7 @@ function LibraryContent() {
       <button className="secondary" onClick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
     </div>
     {error && <p className="error panel">{error}</p>}
+    <LibraryDiagnostics diagnostics={diagnostics} />
     <section className={`status-strip ${health?.reachable ? "ready" : "warning"}`}>
       <div><strong>{health?.collection_name ?? "video_windows"}</strong><span>{health?.reachable ? `${health.points_count} stored windows` : health?.error ?? "Qdrant is not reachable"}</span></div>
       <Link href={`/processing${profileQuery}`}>Index another video</Link>
