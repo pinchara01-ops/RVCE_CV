@@ -10,6 +10,23 @@ This workbench lets a team upload a video, inspect how it is processed into mult
 
 The local default is deliberately safe: no API key is required for the processing UI's selection-only mode. API-based credentials are held only in the backend's in-memory, opaque session; the browser retains only its random session identifier. Restarting the backend clears every API key, and no key is written to job history, exports, diagnostics, or browser storage.
 
+## Project handbook
+
+The [Project Handbook](project-handbook/README.md) is the detailed design and
+delivery reference for this repository. It includes:
+
+- system architecture, data model, embedding-profile compatibility, and the
+  retrieval/reranking boundary;
+- UI flows, operational states, and evidence-oriented search behaviour;
+- a direct dependency, model, provider, cost/access, and supply-chain
+  register;
+- runtime configuration and credential-handling guidance; and
+- engineering process, acceptance-plan, and acceptance-case materials.
+
+The handbook marks current implementation, selectable options, and future
+scale-up work separately so design documentation does not overstate what is
+already deployed.
+
 ## Quick start
 
 If the repository has already been set up on this machine, this is the only command needed:
@@ -30,8 +47,13 @@ Then open [http://127.0.0.1:3000](http://127.0.0.1:3000). The script starts Qdra
 
 Open **Architecture** in the UI before indexing. It shows the complete flow and lets you finalise a compatible collection/profile.
 
-- **Self-hosted** keeps video, models, and Qdrant on the laptop. The current **Index video** path uses X-CLIP for visual retrieval, CLAP for audio, Whisper transcription, and BGE-M3 for the transcript (`speech`) and caption-text fields. It starts in selection-only mode and can use local Qwen2.5-VL, OpenAI, or NVIDIA Cosmos for optional captions. It needs local model downloads and Qdrant/Docker for persistent indexing.
+- **Self-hosted** keeps video, models, and Qdrant on the laptop. The current **Index video** path uses X-CLIP for visual retrieval, CLAP for audio, Whisper transcription, and BGE-M3 for the transcript (`speech`) and caption-text fields. It starts in selection-only mode and can use local Qwen2.5-VL for optional captions. It needs local model downloads and Qdrant/Docker for persistent indexing.
 - **API-based** uses Gemini Embedding 2 for four separate named vectors and Gemini Flash-Lite for transcription, query decomposition, captions, verification, and localisation. Qdrant Cloud holds the vectors, so no local Qdrant container or local model cache is needed for indexing. It requires a Gemini key, a Qdrant Cloud URL/key, and explicit consent before footage is uploaded.
+
+OpenAI GPT-4.1 mini and NVIDIA Cosmos Reasoner are optional paid/credit-based
+caption and verification choices in the API-based profile. They are not
+interchangeable embedding profiles, and they are not defaults in the
+self-hosted profile.
 
 The optional **Qwen3-VL-Reranker-2B** is a hybrid precision stage: it runs locally only after RRF selects a small candidate set, so it needs no API key but downloads its model on first use. It is never run over the full library.
 

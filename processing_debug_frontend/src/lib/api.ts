@@ -1,4 +1,4 @@
-export const API = process.env.NEXT_PUBLIC_PROCESSING_API_URL ?? "http://localhost:8000";
+export const API = process.env.NEXT_PUBLIC_PROCESSING_API_URL ?? "http://127.0.0.1:8000";
 
 export type ModelStatus = {
   component: string;
@@ -53,6 +53,18 @@ export type RuntimePreflight = {
   schema_errors?: string[];
   expected_schema?: Record<string, unknown>;
   error?: string;
+  error_type?: string;
+  timeout_seconds?: number;
+  diagnostics?: RuntimePreflightDiagnostic[];
+};
+
+/** A safe, non-secret checkpoint emitted by the backend Cloud preflight. */
+export type RuntimePreflightDiagnostic = {
+  stage: string;
+  status: "passed" | "failed" | "warning" | "skipped";
+  message: string;
+  elapsed_ms?: number;
+  next_action?: string;
 };
 
 export type RuntimeSession = {

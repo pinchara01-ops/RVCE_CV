@@ -181,6 +181,7 @@ if (-not (Test-LocalUrl "http://127.0.0.1:3000")) {
     $EscapedNpm = $Npm.Source.Replace("'", "''")
     $FrontendScript = @"
 Set-Location -LiteralPath '$EscapedFrontend'
+`$env:NEXT_PUBLIC_PROCESSING_API_URL = 'http://127.0.0.1:8000'
 & '$EscapedNpm' run dev -- --hostname 127.0.0.1 --port 3000
 "@
     Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", (ConvertTo-EncodedPowerShell $FrontendScript)) -WindowStyle Hidden

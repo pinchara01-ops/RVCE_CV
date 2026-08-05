@@ -349,6 +349,25 @@ def test_qdrant_preflight_reports_schema_mismatch_and_redacts_connection_error()
     assert "qdrant-secret" not in failed["error"]
 
 
+def test_qdrant_preflight_exposes_a_safe_timeout_diagnostic():
+    class TimedOutClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def collection_exists(self, _name):
+            raise TimeoutError("timed out while using qdrant-secret")
+
+    result = qdrant_preflight(_api_setup(), client_factory=TimedOutClient)
+
+    assert result["reachable"] is False
+    assert result["error_type"] == "TimeoutError"
+    assert result["diagnostics"][-1]["stage"] == "qdrant_cloud_connection"
+    assert result["diagnostics"][-1]["status"] == "failed"
+    assert "timed out" in result["diagnostics"][-1]["message"]
+    assert "network" in result["diagnostics"][-1]["next_action"].lower()
+    assert "qdrant-secret" not in json.dumps(result)
+
+
 def test_runtime_endpoints_never_return_flat_or_nested_key_values(monkeypatch):
     pytest.importorskip("qdrant_client")
     from processing_indexing import debug_api
