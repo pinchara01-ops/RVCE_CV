@@ -92,7 +92,12 @@ if ($Setup) {
     }
 }
 
-& docker compose up -d qdrant
+if (-not (Test-LocalUrl "http://127.0.0.1:6333/healthz")) {
+    & docker compose up -d qdrant
+}
+else {
+    Write-Host "Qdrant is already running."
+}
 
 if (-not (Test-LocalUrl "http://127.0.0.1:8000/api/index/health")) {
     $EscapedRoot = $Root.Replace("'", "''")
