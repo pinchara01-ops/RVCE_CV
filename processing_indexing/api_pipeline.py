@@ -289,7 +289,7 @@ class _ProfileQdrantSink:
         self,
         *,
         qdrant_url: str,
-        qdrant_api_key: str,
+        qdrant_api_key: str | None,
         profile: ApiEmbeddingProfileContract,
         timeout_seconds: float,
         batch_size: int,
@@ -299,14 +299,12 @@ class _ProfileQdrantSink:
     ) -> None:
         if not qdrant_url.strip():
             raise ValueError("Qdrant URL is required for API-based indexing")
-        if not qdrant_api_key.strip():
-            raise ValueError("Qdrant API key is required for API-based indexing")
         if timeout_seconds <= 0:
             raise ValueError("Qdrant timeout must be positive")
         if batch_size < 1:
             raise ValueError("Qdrant batch size must be positive")
         self._qdrant_url = qdrant_url.rstrip("/")
-        self._qdrant_api_key = qdrant_api_key
+        self._qdrant_api_key = qdrant_api_key or ""
         self.profile = profile
         self.timeout_seconds = timeout_seconds
         self.batch_size = batch_size
@@ -343,8 +341,11 @@ class _ProfileQdrantSink:
                 )
                 self._emit_progress(min(total, offset + len(batch)), total)
         except Exception as exc:
-            safe_error = redact_text(str(exc).replace(self._qdrant_api_key, "[REDACTED]"))
-            raise ApiPipelineError(f"Qdrant Cloud write failed: {safe_error}") from exc
+            raw_error = str(exc)
+            if self._qdrant_api_key:
+                raw_error = raw_error.replace(self._qdrant_api_key, "[REDACTED]")
+            safe_error = redact_text(raw_error)
+            raise ApiPipelineError(f"Qdrant write failed: {safe_error}") from exc
 
     def _store_instance(self) -> Any:
         if self._store is None:
@@ -359,7 +360,7 @@ class _ProfileQdrantSink:
             # never attached to a record, profile, progress event, or error.
             client = client_factory(
                 url=self._qdrant_url,
-                api_key=self._qdrant_api_key,
+                api_key=self._qdrant_api_key or None,
                 timeout=self.timeout_seconds,
             )
             self._store = ProfiledQdrantStore(
@@ -386,7 +387,7 @@ class _ProfileQdrantSink:
 def make_profile_qdrant_sink(
     *,
     qdrant_url: str,
-    qdrant_api_key: str,
+    qdrant_api_key: str | None,
     profile: ApiEmbeddingProfileContract | Any,
     timeout_seconds: float = 10.0,
     batch_size: int = 8,
@@ -394,7 +395,7 @@ def make_profile_qdrant_sink(
     client_factory: Callable[..., Any] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> ApiRecordSink:
-    """Create a lazy Qdrant Cloud sink for one runtime-profile/session.
+    """Create a lazy Qdrant sink for one runtime-profile/session.
 
     ``on_progress(done, total)`` fires after every successful upsert batch so
     ``JobManager`` can add per-window qdrant progress events.  Neither it nor

@@ -24,8 +24,10 @@ from query_retrieval.models import (
 from .config import Settings
 from .debug_jobs import JobManager, sanitize
 from .library import (
+    LibraryReadError,
     collection_health,
     get_window,
+    list_library_diagnostics,
     list_videos,
     list_windows,
     media_path_for_window,
@@ -518,10 +520,15 @@ def _library_runtime(
     runtime = runtime_sessions.get_runtime_config(runtime_session_id)
     if runtime.get("runtime_profile_id") != profile.id:
         raise HTTPException(400, "Runtime session profile does not match the selected library")
+    vector_store_target = str(runtime.get("vector_store_target") or "cloud")
     settings = replace(
         Settings.from_env(),
         qdrant_url=str(runtime["qdrant_url"]),
-        qdrant_api_key=str(runtime["qdrant_api_key"]),
+        qdrant_api_key=(
+            str(runtime.get("qdrant_api_key") or "")
+            if vector_store_target == "cloud"
+            else None
+        ),
         qdrant_timeout_seconds=float(runtime.get("qdrant_timeout_seconds", 10)),
         collection_name=profile.collection_name,
     )
@@ -534,10 +541,38 @@ def _redact_library_health(health: dict, secrets: tuple[str, ...]) -> dict:
     return redact_secrets(health, secrets)
 
 
+def _library_http_error(
+    operation: str,
+    error: Exception,
+    secrets: tuple[str, ...] = (),
+) -> HTTPException:
+    """Return the useful, redacted reason that the Library read failed."""
+
+    if isinstance(error, LibraryReadError):
+        detail = str(error)
+    else:
+        detail = (
+            f"Library {operation.replace('_', ' ')} failed "
+            f"({type(error).__name__}): {error}. "
+            "Review Library diagnostics and retry."
+        )
+    safe_detail = str(redact_secrets(detail, secrets))
+    logger.warning("Library %s failed: %s", operation, safe_detail)
+    return HTTPException(503, safe_detail)
+
+
+@app.get("/api/diagnostics/library")
+def library_diagnostics(limit: int = 50):
+    """Safe, persistent diagnostics for Library reads after indexing completes."""
+
+    return {"diagnostics": list_library_diagnostics(limit=max(1, min(limit, 500)))}
+
+
 @app.get("/api/index/health")
 def index_health(
     runtime_session_id: str | None = None, profile_id: str | None = None
 ):
+    secrets: tuple[str, ...] = ()
     try:
         settings, expected, secrets = _library_runtime(
             runtime_session_id=runtime_session_id, profile_id=profile_id
@@ -548,7 +583,7 @@ def index_health(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - return a safe connection diagnosis
-        raise HTTPException(503, "Could not read the selected Qdrant collection") from exc
+        raise _library_http_error("collection_health", exc, secrets) from exc
 
 
 @app.get("/api/index/videos")
@@ -557,15 +592,16 @@ def indexed_videos(
     runtime_session_id: str | None = None,
     profile_id: str | None = None,
 ):
+    secrets: tuple[str, ...] = ()
     try:
-        settings, _expected, _secrets = _library_runtime(
+        settings, _expected, secrets = _library_runtime(
             runtime_session_id=runtime_session_id, profile_id=profile_id
         )
         return {"videos": list_videos(settings=settings, limit=limit)}
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, "Could not read indexed videos") from exc
+        raise _library_http_error("indexed_videos", exc, secrets) from exc
 
 
 @app.get("/api/index/windows")
@@ -576,8 +612,9 @@ def indexed_windows(
     runtime_session_id: str | None = None,
     profile_id: str | None = None,
 ):
+    secrets: tuple[str, ...] = ()
     try:
-        settings, _expected, _secrets = _library_runtime(
+        settings, _expected, secrets = _library_runtime(
             runtime_session_id=runtime_session_id, profile_id=profile_id
         )
         return {
@@ -588,7 +625,7 @@ def indexed_windows(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, "Could not read indexed windows") from exc
+        raise _library_http_error("indexed_windows", exc, secrets) from exc
 
 
 @app.get("/api/index/windows/{window_id}")
@@ -598,15 +635,16 @@ def indexed_window(
     runtime_session_id: str | None = None,
     profile_id: str | None = None,
 ):
+    secrets: tuple[str, ...] = ()
     try:
-        settings, _expected, _secrets = _library_runtime(
+        settings, _expected, secrets = _library_runtime(
             runtime_session_id=runtime_session_id, profile_id=profile_id
         )
         record = get_window(window_id, settings=settings, include_vectors=vectors)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, "Could not read indexed window") from exc
+        raise _library_http_error("indexed_window", exc, secrets) from exc
     if record is None:
         raise HTTPException(404, "Indexed window not found")
     return record
@@ -619,15 +657,16 @@ def indexed_media(
     runtime_session_id: str | None = None,
     profile_id: str | None = None,
 ):
+    secrets: tuple[str, ...] = ()
     try:
-        settings, _expected, _secrets = _library_runtime(
+        settings, _expected, secrets = _library_runtime(
             runtime_session_id=runtime_session_id, profile_id=profile_id
         )
         path = media_path_for_window(window_id, settings=settings)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, "Could not resolve indexed media") from exc
+        raise _library_http_error("indexed_media", exc, secrets) from exc
     if path is None:
         raise HTTPException(404, "Indexed media is unavailable")
     return media_response(path, request)

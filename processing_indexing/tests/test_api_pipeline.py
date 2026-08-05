@@ -385,7 +385,7 @@ def test_profile_adapter_and_qdrant_sink_upsert_records_with_batch_progress():
             },
         }
     )
-    state = {"created": None, "points": [], "factory": None}
+    state = {"created": None, "payload_indexes": [], "points": [], "factory": None}
 
     class FakeQdrant:
         def collection_exists(self, _name):
@@ -393,6 +393,9 @@ def test_profile_adapter_and_qdrant_sink_upsert_records_with_batch_progress():
 
         def create_collection(self, **kwargs):
             state["created"] = kwargs
+
+        def create_payload_index(self, **kwargs):
+            state["payload_indexes"].append(kwargs)
 
         def upsert(self, **kwargs):
             state["points"].extend(kwargs["points"])
@@ -421,6 +424,7 @@ def test_profile_adapter_and_qdrant_sink_upsert_records_with_batch_progress():
     sink(records, contract)
 
     assert state["created"]["collection_name"] == contract.collection_name
+    assert {item["field_name"] for item in state["payload_indexes"]} == {"video_id", "window_id"}
     assert len(state["points"]) == 3
     assert updates == [(2, 3), (3, 3)]
     assert state["factory"]["url"] == "https://example.cloud.qdrant.io"

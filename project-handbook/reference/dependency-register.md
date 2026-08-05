@@ -22,10 +22,10 @@ The Python manifests use compatible version ranges rather than a lockfile with h
 
 The following are the source-of-truth files for direct dependencies:
 
-- `requirements-processing.txt` ? the current processing, retrieval, API, and quality-tool set.
-- `requirements.txt` ? a smaller, overlapping legacy requirement list; it is not sufficient on its own for the full processing UI.
-- `processing_debug_frontend/package.json` and `package-lock.json` ? the browser application and its resolved npm tree.
-- `docker-compose.yml` ? the pinned local Qdrant image.
+- `requirements-processing.txt` — the current processing, retrieval, API, and quality-tool set.
+- `requirements.txt` — a smaller, overlapping legacy requirement list; it is not sufficient on its own for the full processing UI.
+- `processing_debug_frontend/package.json` and `package-lock.json` — the browser application and its resolved npm tree.
+- `docker-compose.yml` — the pinned local Qdrant image.
 
 No repository-wide `LICENSE`, `NOTICE`, or generated third-party attribution inventory is currently tracked. That is a governance gap to resolve before distributing a packaged build.
 
@@ -99,9 +99,9 @@ Provider terms, regions, quotas, model availability, and pricing change independ
 | Provider / tool | What the repository uses | Free or paid posture | Controls required before use | Authoritative reference |
 |---|---|---|---|---|
 | Qdrant local | Pinned `qdrant/qdrant:v1.11.5` Docker image with a named local volume. | No managed-service bill from Qdrant Cloud, but the operator provides the machine, Docker environment, storage, and network. | Keep the local service bound appropriately; back up or delete the Docker volume deliberately. | [Qdrant documentation](https://qdrant.tech/documentation/) |
-| Qdrant Cloud | API-based profile's named-vector store over HTTPS. | Qdrant publishes free and paid Cloud offerings; capacity and retention are service-plan dependent. | Require cluster URL/key, test connection preflight, review region/data handling, and avoid treating a free tier as durable archival storage. | [Cloud cluster documentation](https://qdrant.tech/documentation/cloud/create-cluster/) ? [pricing](https://qdrant.tech/pricing/) |
-| Gemini API | Gemini Embedding 2 and Flash-Lite in the API-based default. | Google publishes free and paid tiers; free-tier limits, data-use terms, and availability can differ by account and region. | Obtain a user key, capture explicit consent before uploading footage, display quota failures, and never promise uninterrupted capacity. | [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) ? [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) |
-| OpenAI API | Optional caption/verification provider. | Paid/API-credit-required selection in this codebase. | Obtain an operator key and budget approval; use the model's current pricing page rather than hard-coded rates in product copy. | [OpenAI API pricing](https://openai.com/api/pricing/) ? [GPT-4.1 mini documentation](https://developers.openai.com/api/docs/models/gpt-4.1-mini) |
+| Qdrant Cloud | API-based profile's named-vector store over HTTPS. | Qdrant publishes free and paid Cloud offerings; capacity and retention are service-plan dependent. | Require cluster URL/key, test connection preflight, review region/data handling, and avoid treating a free tier as durable archival storage. | [Cloud cluster documentation](https://qdrant.tech/documentation/cloud/create-cluster/) · [pricing](https://qdrant.tech/pricing/) |
+| Gemini API | Gemini Embedding 2 and Flash-Lite in the API-based default. | Google publishes free and paid tiers; free-tier limits, data-use terms, and availability can differ by account and region. | Obtain a user key, capture explicit consent before uploading footage, display quota failures, and never promise uninterrupted capacity. | [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) · [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) |
+| OpenAI API | Optional caption/verification provider. | Paid/API-credit-required selection in this codebase. | Obtain an operator key and budget approval; use the model's current pricing page rather than hard-coded rates in product copy. | [OpenAI API pricing](https://openai.com/api/pricing/) · [GPT-4.1 mini documentation](https://developers.openai.com/api/docs/models/gpt-4.1-mini) |
 | NVIDIA API / NIM | Optional Cosmos Reasoner caption/verification provider. | The runtime profile treats it as paid/API-credit required; developer-program and evaluation access, if offered, are account-specific. | Confirm the selected model, account entitlement, quota, data policy, and regional endpoint immediately before use. | [NVIDIA Cosmos NIM documentation](https://docs.nvidia.com/nim/cosmos/latest/introduction.html) |
 | Groq API | Optional legacy self-hosted query-decomposition call. | Account-specific quota and commercial terms. | Keep the feature flag explicit, configure a bounded timeout, and preserve deterministic fallback when unavailable. | [Groq documentation](https://console.groq.com/docs) |
 | Docker / Docker Desktop | Runs local Qdrant in the documented developer workflow. | Docker Engine and Docker Desktop terms are distinct; Desktop commercial use may require a subscription depending on the organisation. | Review the applicable Docker agreement for the operator's organisation and avoid assuming a personal entitlement transfers to a team. | [Docker subscription agreement](https://www.docker.com/legal/docker-subscription-service-agreement/) |

@@ -243,6 +243,7 @@ export default function ArchitecturePage() {
   const [secrets, setSecrets] = useState<SecretValues>({ gemini_api_key: "", openai_api_key: "", nvidia_api_key: "" });
   const [qdrantUrl, setQdrantUrl] = useState("");
   const [qdrantApiKey, setQdrantApiKey] = useState("");
+  const [vectorStoreTarget, setVectorStoreTarget] = useState<"cloud" | "local">("cloud");
   const [cloudConsent, setCloudConsent] = useState(false);
   const [activationMessage, setActivationMessage] = useState("");
   const [error, setError] = useState("");
@@ -349,8 +350,10 @@ export default function ArchitecturePage() {
       const credential = providerCredential(option?.provider ?? "");
       if (option?.credential_required && credential && !secrets[credential].trim()) missingCredentials.add(credential);
     });
-    if (!qdrantUrl.trim() || !qdrantApiKey.trim()) {
-      setError("Enter the Qdrant Cloud URL and API key in the storage block before activating API-based mode.");
+    if (!qdrantUrl.trim() || (vectorStoreTarget === "cloud" && !qdrantApiKey.trim())) {
+      setError(vectorStoreTarget === "cloud"
+        ? "Enter the Qdrant Cloud URL and API key in the storage block before activating API-based mode."
+        : "Enter the local Qdrant URL in the storage block before activating API-based mode.");
       return;
     }
     if (missingCredentials.size) {
@@ -367,8 +370,9 @@ export default function ArchitecturePage() {
     try {
       const runtime: RuntimeSessionRequest = {
         profile_id: activeProfile.id,
+        vector_store_target: vectorStoreTarget,
         qdrant_url: qdrantUrl.trim(),
-        qdrant_api_key: qdrantApiKey.trim(),
+        qdrant_api_key: vectorStoreTarget === "cloud" ? qdrantApiKey.trim() : undefined,
         gemini_api_key: secrets.gemini_api_key.trim() || undefined,
         openai_api_key: secrets.openai_api_key.trim() || undefined,
         nvidia_api_key: secrets.nvidia_api_key.trim() || undefined,
@@ -401,8 +405,8 @@ export default function ArchitecturePage() {
       setSecrets({ gemini_api_key: "", openai_api_key: "", nvidia_api_key: "" });
       setQdrantApiKey("");
       setActivationMessage(preflight.collection_exists
-        ? "Architecture activated. The compatible Qdrant Cloud collection is ready."
-        : "Architecture activated. Qdrant Cloud is reachable; the compatible collection will be created on the first index run.");
+        ? `Architecture activated. The compatible ${preflight.vector_store_target === "local" ? "local Qdrant" : "Qdrant Cloud"} collection is ready.`
+        : `Architecture activated. ${preflight.vector_store_target === "local" ? "Local Qdrant" : "Qdrant Cloud"} is reachable; the compatible collection will be created on the first index run.`);
       router.push(`/processing?profile_id=${encodeURIComponent(session.profile.id)}&runtime_session_id=${encodeURIComponent(session.session_id)}`);
     } catch (cause) {
       if (createdSessionId) {
@@ -438,10 +442,11 @@ export default function ArchitecturePage() {
       </section>
 
       {apiBased && <section className="architecture-storage" aria-labelledby="storage-heading">
-        <div className="architecture-storage-copy"><p className="architecture-kicker">Storage</p><h2 id="storage-heading">Qdrant Cloud, named vectors</h2><p>One hosted collection keeps visual, audio, transcript, and caption vectors together as separate fields. No Docker or database VM is needed for this profile.</p></div>
+        <div className="architecture-storage-copy"><p className="architecture-kicker">Storage</p><h2 id="storage-heading">{vectorStoreTarget === "local" ? "Local Qdrant, named vectors" : "Qdrant Cloud, named vectors"}</h2><p>{vectorStoreTarget === "local" ? "Keep the API model pipeline, but write its separate vectors to Qdrant running on this laptop. Start the local Qdrant container before activation." : "One hosted collection keeps visual, audio, transcript, and caption vectors together as separate fields. No Docker or database VM is needed for this profile."}</p></div>
         <div className="architecture-storage-fields">
-          <label className="field">Qdrant Cloud URL<input required type="url" value={qdrantUrl} onChange={(event) => setQdrantUrl(event.target.value)} autoComplete="off" placeholder="https://your-cluster.cloud.qdrant.io:6333" /></label>
-          <label className="field">Qdrant Cloud API key<input required type="password" value={qdrantApiKey} onChange={(event) => setQdrantApiKey(event.target.value)} autoComplete="off" spellCheck={false} placeholder="Held only until activation" /></label>
+          <label className="field">Vector database<select value={vectorStoreTarget} onChange={(event) => { const target = event.target.value as "cloud" | "local"; setVectorStoreTarget(target); setQdrantUrl(target === "local" ? "http://127.0.0.1:6333" : ""); setQdrantApiKey(""); setRuntimePreflight(undefined); }}><option value="cloud">Qdrant Cloud</option><option value="local">Local Qdrant on this laptop</option></select><span>{vectorStoreTarget === "local" ? "Requires Qdrant on http://127.0.0.1:6333. No Qdrant API key is used." : "Managed endpoint; no local database container is needed."}</span></label>
+          <label className="field">{vectorStoreTarget === "local" ? "Local Qdrant URL" : "Qdrant Cloud URL"}<input required type="url" value={qdrantUrl} onChange={(event) => setQdrantUrl(event.target.value)} autoComplete="off" placeholder={vectorStoreTarget === "local" ? "http://127.0.0.1:6333" : "https://your-cluster.cloud.qdrant.io:6333"} /></label>
+          {vectorStoreTarget === "cloud" && <label className="field">Qdrant Cloud API key<input required type="password" value={qdrantApiKey} onChange={(event) => setQdrantApiKey(event.target.value)} autoComplete="off" spellCheck={false} placeholder="Held only until activation" /></label>}
         </div>
       </section>}
 

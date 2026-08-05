@@ -44,6 +44,7 @@ export type ProviderChoice = "gemini" | "openai" | "cosmos" | "self-hosted" | "l
 export type RuntimeStage = "transcription" | "media_embedding" | "text_embedding" | "caption" | "verification" | "query_decomposition" | "reranker";
 
 export type RuntimePreflight = {
+  vector_store_target?: "cloud" | "local";
   qdrant?: { ok: boolean; message: string };
   gemini?: { ok: boolean; message: string };
   warnings?: string[];
@@ -76,6 +77,7 @@ export type RuntimeSession = {
 
 export type RuntimeSessionRequest = {
   profile_id: string;
+  vector_store_target?: "cloud" | "local";
   qdrant_url?: string;
   qdrant_api_key?: string;
   gemini_api_key?: string;
@@ -164,6 +166,20 @@ export type IndexedVideo = {
   direct_captions: number;
   caption_available: number;
   embedding_profile?: string;
+};
+
+/** A redacted, durable Qdrant read failure emitted by the Library API. */
+export type LibraryDiagnostic = {
+  timestamp: string;
+  operation: string;
+  status: "retrying" | "failed";
+  attempt: number;
+  attempts: number;
+  collection_name: string;
+  error_type: string;
+  error: string;
+  elapsed_ms?: number;
+  next_action?: string;
 };
 
 export type SearchModality = "visual" | "audio" | "speech" | "transcript" | "caption";
@@ -276,6 +292,30 @@ export class ApiError extends Error {
     super(body || `Request failed (${status}).`);
     this.name = "ApiError";
   }
+}
+
+/**
+ * Prefer the API's safe `detail` message over `ApiError: { ... }` in the UI.
+ * This is deliberately tolerant of malformed/non-JSON responses.
+ */
+export function apiErrorMessage(cause: unknown): string {
+  if (cause instanceof ApiError) {
+    try {
+      const parsed: unknown = JSON.parse(cause.body);
+      if (
+        typeof parsed === "object"
+        && parsed !== null
+        && "detail" in parsed
+        && typeof parsed.detail === "string"
+      ) {
+        return parsed.detail;
+      }
+    } catch {
+      // Fall back to the safe text body below.
+    }
+    return cause.body || `Request failed (${cause.status}).`;
+  }
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 export async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {

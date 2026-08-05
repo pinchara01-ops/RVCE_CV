@@ -170,7 +170,7 @@ flowchart LR
   RRF --> MW[Merge adjacent / overlapping windows]
   MW --> RR[Optional Qwen3-VL cross-encoder reranker]
   RR --> VV[Optional VLM verification + localisation]
-  VV --> OUT[Playable result, evidence, 2?5 s interval]
+  VV --> OUT[Playable result, evidence, 2–5 s interval]
 ```
 
 ### Recall: named-vector search plus RRF
@@ -296,7 +296,7 @@ controlled demonstrations:
   optional verification/localisation interfaces.
 - [x] Structured diagnostics and labelled-query metric support.
 - [ ] Durable jobs, tenant identity, durable credential management, and
-  multi-worker orchestration ? intentionally outside the present local design.
+  multi-worker orchestration — intentionally outside the present local design.
 
 For the exact field-level storage contract, continue to
 [Data and retrieval design](data-and-retrieval-design.md). For concrete user

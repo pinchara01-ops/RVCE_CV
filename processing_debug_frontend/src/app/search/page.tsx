@@ -183,7 +183,7 @@ export default function SearchPage() {
       return;
     }
     if (isApiBased && !sessionMatchesProfile) {
-      setError("Set up API-based mode in Architecture first. Its opaque session is required to access Qdrant Cloud and Gemini.");
+      setError("Set up API-based mode in Architecture first. Its opaque session is required to access the selected Qdrant target and Gemini.");
       return;
     }
 
@@ -242,7 +242,7 @@ export default function SearchPage() {
       <p className="muted search-intro">Search across visual, audio, speech, and caption vectors. The first search loads query models, so it can take several minutes on a fresh machine.</p>
 
       <section className="form-section">
-        <div className="section-heading"><h2>Search profile</h2><p>{isApiBased ? "Uses the active API session, Qdrant Cloud, and the compatible four-vector embedding profile." : "Uses local query models and the local Qdrant collection."}</p></div>
+        <div className="section-heading"><h2>Search profile</h2><p>{isApiBased ? "Uses the active API session, its selected Qdrant target, and the compatible four-vector embedding profile." : "Uses local query models and the local Qdrant collection."}</p></div>
         <label className="field">
           Indexed embedding profile
           <select value={profileId} onChange={(event) => {
@@ -259,7 +259,7 @@ export default function SearchPage() {
               { id: "api-gemini-free-v1", label: "API-based (Gemini)", mode: "api-based" },
             ]).map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}
           </select>
-          {isApiBased && <span>{sessionMatchesProfile ? "Active API session found; keys stay in the backend." : "No active API session. Return to Architecture to configure Qdrant Cloud and Gemini."}</span>}
+          {isApiBased && <span>{sessionMatchesProfile ? "Active API session found; keys stay in the backend." : "No active API session. Return to Architecture to configure Qdrant and Gemini."}</span>}
         </label>
       </section>
 

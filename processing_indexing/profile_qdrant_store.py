@@ -21,6 +21,31 @@ from typing import Any
 from .qdrant_store import deterministic_point_id
 
 
+# Qdrant Cloud requires payload indexes for filtered scroll/search calls. The
+# Library filters by both fields, and these fields are safe stable identifiers
+# rather than free-form text.
+WINDOW_FILTER_PAYLOAD_FIELDS = ("video_id", "window_id")
+
+
+def ensure_window_payload_indexes(client: Any, collection_name: str) -> None:
+    """Create the keyword indexes required by Library and idempotency reads.
+
+    `create_payload_index` is idempotent for the same schema, so this also
+    repairs an API-profile collection that was created before this safeguard
+    existed, without deleting or re-indexing any vectors.
+    """
+
+    from qdrant_client.models import PayloadSchemaType
+
+    for field_name in WINDOW_FILTER_PAYLOAD_FIELDS:
+        client.create_payload_index(
+            collection_name=collection_name,
+            field_name=field_name,
+            field_schema=PayloadSchemaType.KEYWORD,
+            wait=True,
+        )
+
+
 class ProfileCollectionSchemaError(RuntimeError):
     """Raised when a cloud collection differs from its embedding profile."""
 
@@ -110,33 +135,33 @@ class ProfiledQdrantStore:
                 collection_name=self.collection_name,
                 vectors_config=expected,
             )
-            return
-
-        live = self.client.get_collection(self.collection_name).config.params.vectors
-        errors: list[str] = []
-        if not isinstance(live, dict):
-            errors.append("collection has an unnamed vector, expected named vectors")
         else:
-            if set(live) != set(expected):
-                errors.append(
-                    "vector names: expected "
-                    f"{sorted(expected)}, got {sorted(live)}"
-                )
-            for name, entry in self.schema.items():
-                current = live.get(name)
-                if current is None:
-                    continue
-                if int(current.size) != entry.dimensions:
+            live = self.client.get_collection(self.collection_name).config.params.vectors
+            errors: list[str] = []
+            if not isinstance(live, dict):
+                errors.append("collection has an unnamed vector, expected named vectors")
+            else:
+                if set(live) != set(expected):
                     errors.append(
-                        f"{name} dimensions: expected {entry.dimensions}, got {current.size}"
+                        "vector names: expected "
+                        f"{sorted(expected)}, got {sorted(live)}"
                     )
-                actual_distance = str(current.distance).lower().split(".")[-1]
-                if actual_distance != entry.distance.lower():
-                    errors.append(
-                        f"{name} distance: expected {entry.distance}, got {actual_distance}"
-                    )
-        if errors:
-            raise ProfileCollectionSchemaError("; ".join(errors))
+                for name, entry in self.schema.items():
+                    current = live.get(name)
+                    if current is None:
+                        continue
+                    if int(current.size) != entry.dimensions:
+                        errors.append(
+                            f"{name} dimensions: expected {entry.dimensions}, got {current.size}"
+                        )
+                    actual_distance = str(current.distance).lower().split(".")[-1]
+                    if actual_distance != entry.distance.lower():
+                        errors.append(
+                            f"{name} distance: expected {entry.distance}, got {actual_distance}"
+                        )
+            if errors:
+                raise ProfileCollectionSchemaError("; ".join(errors))
+        ensure_window_payload_indexes(self.client, self.collection_name)
 
     def _validate_record(self, record: ProfileWindowRecord) -> dict[str, list[float]]:
         vectors = {name: list(values) for name, values in record.vectors.items()}

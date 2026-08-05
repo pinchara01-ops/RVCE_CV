@@ -85,6 +85,33 @@ def test_api_profile_requires_explicit_consent_qdrant_cloud_and_required_keys():
         )
 
 
+def test_api_profile_can_use_local_qdrant_without_a_qdrant_cloud_key():
+    setup = validate_runtime_setup(
+        "api-gemini-free-v1",
+        {
+            "vector_store_target": "local",
+            "qdrant_url": "http://127.0.0.1:6333",
+            "consent_cloud_video": True,
+        },
+        {"gemini_api_key": "gemini-secret"},
+    )
+
+    assert setup.configuration["vector_store_target"] == "local"
+    assert setup.configuration["qdrant_url"] == "http://127.0.0.1:6333"
+    assert "qdrant_api_key" not in setup.credentials
+
+    with pytest.raises(RuntimeProfileError, match="does not use a Qdrant Cloud API key"):
+        validate_runtime_setup(
+            "api-gemini-free-v1",
+            {
+                "vector_store_target": "local",
+                "qdrant_url": "http://127.0.0.1:6333",
+                "consent_cloud_video": True,
+            },
+            {"gemini_api_key": "g", "qdrant_api_key": "should-not-be-used"},
+        )
+
+
 def test_qdrant_cloud_url_rejects_userinfo_before_a_session_can_be_public():
     with pytest.raises(RuntimeProfileError, match="must not include credentials"):
         validate_runtime_setup(
@@ -313,6 +340,33 @@ def test_qdrant_preflight_succeeds_when_collection_is_absent_without_mutation():
     assert result["schema_valid"] is True
     assert "created by the first index run" in result["warning"]
     assert calls[0]["api_key"] == "qdrant-secret"
+
+
+def test_api_local_qdrant_preflight_does_not_send_a_cloud_key():
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def collection_exists(self, _name):
+            return False
+
+    setup = validate_runtime_setup(
+        "api-gemini-free-v1",
+        {
+            "vector_store_target": "local",
+            "qdrant_url": "http://127.0.0.1:6333",
+            "consent_cloud_video": True,
+        },
+        {"gemini_api_key": "gemini-secret"},
+    )
+    result = qdrant_preflight(setup, client_factory=Client)
+
+    assert result["reachable"] is True
+    assert result["vector_store_target"] == "local"
+    assert result["diagnostics"][-2]["stage"] == "local_qdrant_connection"
+    assert calls[0]["api_key"] is None
 
 
 def test_qdrant_preflight_reports_schema_mismatch_and_redacts_connection_error():

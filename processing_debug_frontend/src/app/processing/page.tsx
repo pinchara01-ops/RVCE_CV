@@ -58,6 +58,7 @@ function ProcessingContent() {
   const [runtimePreflight, setRuntimePreflight] = useState<RuntimePreflight>();
   const [runtimePreflightCheckedAt, setRuntimePreflightCheckedAt] = useState<string>();
   const [configuredRuntimeSession, setConfiguredRuntimeSession] = useState<RuntimeSession>();
+  const [apiVectorStoreTarget, setApiVectorStoreTarget] = useState<"cloud" | "local">("cloud");
   const requestedRuntimeSessionId = searchParams.get("runtime_session_id");
   const activeProfile = profiles.find((profile) => profile.id === profileId);
   const isApiBased = activeProfile?.mode === "api-based" || activeProfile?.mode === "api_based" || profileId === "api-gemini-free-v1";
@@ -68,6 +69,9 @@ function ProcessingContent() {
     && profileId === "self-hosted-v1");
   const sessionProviders = configuredRuntimeSession?.configuration?.providers as Record<string, unknown> | undefined;
   const sessionModels = configuredRuntimeSession?.configuration?.models as Record<string, unknown> | undefined;
+  const sessionVectorStoreTarget = configuredRuntimeSession?.configuration?.vector_store_target === "local"
+    ? "local"
+    : "cloud";
   const sessionCaptionProvider = typeof sessionProviders?.caption === "string"
     ? sessionProviders.caption
     : "none";
@@ -191,8 +195,11 @@ function ProcessingContent() {
         if (!session || session.profile.id !== profileId) {
           const runtime: RuntimeSessionRequest = {
             profile_id: profileId,
+            vector_store_target: apiVectorStoreTarget,
             qdrant_url: String(data.get("qdrant_url") ?? "").trim(),
-            qdrant_api_key: String(data.get("qdrant_api_key") ?? "").trim(),
+            qdrant_api_key: apiVectorStoreTarget === "cloud"
+              ? String(data.get("qdrant_api_key") ?? "").trim()
+              : undefined,
             gemini_api_key: String(data.get("gemini_api_key") ?? "").trim(),
             openai_api_key: String(data.get("api_openai_api_key") ?? "").trim() || undefined,
             nvidia_api_key: String(data.get("api_nvidia_api_key") ?? "").trim() || undefined,
@@ -341,20 +348,21 @@ function ProcessingContent() {
                 <label className="field">Stride (seconds)<input key={`${profileId}-stride`} name="stride_seconds" type="number" step="0.1" min="1" defaultValue="10" /></label>
               </div>
               <input type="hidden" name="index_qdrant" value="on" />
-              <p className="hint">This profile always saves separate visual, audio, transcript, and caption vectors to Qdrant Cloud. It does not use Docker, local Qdrant, or a local model cache.</p>
+              <p className="hint">This profile always saves separate visual, audio, transcript, and caption vectors. The Architecture session decides whether those vectors use Qdrant Cloud or local Qdrant.</p>
             </section>
 
             {hasConfiguredApiSession && configuredRuntimeSession ? <section className="form-section api-setup">
-              <div className="section-heading"><h2>Architecture session is ready</h2><p>Your model choices, Qdrant Cloud endpoint, and credentials were checked in the Architecture step. Keys are not sent again with this upload.</p></div>
-              <div className="runtime-summary"><strong>{configuredRuntimeSession.profile.label}</strong><span>Collection: <code>{configuredRuntimeSession.profile.collection_name}</code></span><span>Session-only credentials are active in this backend process.</span></div>
+              <div className="section-heading"><h2>Architecture session is ready</h2><p>Your model choices and vector-database connection were checked in the Architecture step. Keys are not sent again with this upload.</p></div>
+              <div className="runtime-summary"><strong>{configuredRuntimeSession.profile.label}</strong><span>Collection: <code>{configuredRuntimeSession.profile.collection_name}</code></span><span>Vector DB: {sessionVectorStoreTarget === "local" ? "local Qdrant" : "Qdrant Cloud"}. Session-only credentials are active in this backend process.</span></div>
               <p className="hint">Upload the video above to start the configured API-based index. To change providers or keys, return to <Link href="/architecture">Architecture</Link>.</p>
               {runtimeMessage && <p className="runtime-message">{runtimeMessage}</p>}
             </section> : <section className="form-section api-setup">
               <div className="section-heading"><h2>API-based setup</h2><p>Credentials remain only in this backend process for the active browser session. Restarting the backend clears them.</p></div>
-              <div className="runtime-summary"><strong>Free default</strong><span>Gemini Embedding 2 + Gemini 3.5 Flash-Lite + Qdrant Cloud Free.</span><span>OpenAI and NVIDIA Cosmos are optional and require your own paid API credit.</span></div>
+              <div className="runtime-summary"><strong>Free default</strong><span>Gemini Embedding 2 + Gemini 3.5 Flash-Lite + Qdrant Cloud Free.</span><span>You can instead choose local Qdrant below; OpenAI and NVIDIA Cosmos are optional and require your own paid API credit.</span></div>
               <div className="field-grid">
-                <label className="field field-wide">Qdrant Cloud URL<input required name="qdrant_url" type="url" autoComplete="off" placeholder="https://your-cluster.cloud.qdrant.io:6333" /><span>Your managed Qdrant Cloud endpoint. No database container is needed on this laptop.</span></label>
-                <label className="field">Qdrant Cloud API key<input required name="qdrant_api_key" type="password" autoComplete="off" /><span>Session-only; never shown in diagnostics or exports.</span></label>
+                <label className="field">Vector database<select name="vector_store_target" value={apiVectorStoreTarget} onChange={(event) => setApiVectorStoreTarget(event.target.value as "cloud" | "local")}><option value="cloud">Qdrant Cloud</option><option value="local">Local Qdrant on this laptop</option></select><span>{apiVectorStoreTarget === "local" ? "Start local Qdrant first. No Qdrant API key is used." : "Managed endpoint; no local database container is needed."}</span></label>
+                <label className="field field-wide">{apiVectorStoreTarget === "local" ? "Local Qdrant URL" : "Qdrant Cloud URL"}<input key={apiVectorStoreTarget} required name="qdrant_url" type="url" autoComplete="off" defaultValue={apiVectorStoreTarget === "local" ? "http://127.0.0.1:6333" : ""} placeholder={apiVectorStoreTarget === "local" ? "http://127.0.0.1:6333" : "https://your-cluster.cloud.qdrant.io:6333"} /><span>{apiVectorStoreTarget === "local" ? "Run `docker compose up -d qdrant` before submitting." : "Your managed Qdrant Cloud endpoint. No database container is needed on this laptop."}</span></label>
+                {apiVectorStoreTarget === "cloud" && <label className="field">Qdrant Cloud API key<input required name="qdrant_api_key" type="password" autoComplete="off" /><span>Session-only; never shown in diagnostics or exports.</span></label>}
                 <label className="field field-wide">Gemini API key<input required name="gemini_api_key" type="password" autoComplete="off" placeholder="AIza..." /><span>Required for the free Gemini default. Free-tier inputs can be used by Google to improve products.</span></label>
               </div>
               <div className="provider-grid">

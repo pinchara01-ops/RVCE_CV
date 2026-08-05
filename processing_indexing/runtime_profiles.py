@@ -323,8 +323,8 @@ API_GEMINI_FREE_V1 = RuntimeProfile(
     label="API-based (Gemini free default)",
     mode="api_based",
     description=(
-        "Managed Qdrant Cloud with Gemini Embedding 2 and Gemini Flash-Lite. "
-        "Video is sent to the selected API providers."
+        "Gemini Embedding 2 and Gemini Flash-Lite with either Qdrant Cloud "
+        "or a local Qdrant instance. Video is sent to the selected API providers."
     ),
     collection_name="video_windows_api_gemini_free_v1",
     vectors=(
@@ -337,6 +337,7 @@ API_GEMINI_FREE_V1 = RuntimeProfile(
         {
             "window_seconds": 20.0,
             "stride_seconds": 10.0,
+            "vector_store_target": "cloud",
             "providers": {
                 "transcription": "gemini",
                 "media_embedding": "gemini",
@@ -368,6 +369,7 @@ _STAGE_ALIASES = MappingProxyType({"decomposition": "query_decomposition"})
 _CONFIGURATION_KEYS = frozenset(
     {
         "qdrant_url",
+        "vector_store_target",
         "qdrant_timeout_seconds",
         "window_seconds",
         "stride_seconds",
@@ -472,15 +474,23 @@ def validate_runtime_setup(
         normalized.get("qdrant_timeout_seconds", 10.0), "qdrant_timeout_seconds"
     )
 
-    if profile.qdrant_target == "cloud":
-        normalized["qdrant_url"] = _normalize_qdrant_cloud_url(
-            normalized.get("qdrant_url")
-        )
+    vector_store_target = _normalize_vector_store_target(
+        profile, normalized.get("vector_store_target")
+    )
+    normalized["vector_store_target"] = vector_store_target
+    if profile.requires_cloud_consent:
         if raw_config.get("consent_cloud_video") is not True:
             raise RuntimeProfileError(
                 "consent_cloud_video must be true before API-based processing can upload video"
             )
         normalized["consent_cloud_video"] = True
+    else:
+        normalized["consent_cloud_video"] = False
+
+    if vector_store_target == "cloud":
+        normalized["qdrant_url"] = _normalize_qdrant_cloud_url(
+            normalized.get("qdrant_url")
+        )
         # Keep only credentials selected by this concrete run configuration.
         # This is intentionally done after validation: an API-key field that
         # was needed by a previous provider selection must not linger in an
@@ -488,7 +498,10 @@ def validate_runtime_setup(
         # Gemini.  It reduces the secret footprint without weakening the
         # required-key check below.
         required_credentials = _require_credentials(
-            profile, normalized["providers"], normalized_credentials
+            profile,
+            normalized["providers"],
+            normalized_credentials,
+            require_qdrant_key=True,
         )
         normalized_credentials = {
             name: value
@@ -496,14 +509,28 @@ def validate_runtime_setup(
             if name in required_credentials
         }
     else:
-        if raw_credentials:
+        if profile.mode == "self_hosted" and raw_credentials:
             raise RuntimeProfileError(
                 "Self-hosted mode does not accept cloud API credentials in a runtime session"
             )
+        if normalized_credentials.get("qdrant_api_key"):
+            raise RuntimeProfileError(
+                "Local Qdrant does not use a Qdrant Cloud API key; remove it from this setup"
+            )
         normalized["qdrant_url"] = _normalize_local_qdrant_url(
-            normalized.get("qdrant_url")
+            normalized.get("qdrant_url") or "http://127.0.0.1:6333"
         )
-        normalized["consent_cloud_video"] = False
+        required_credentials = _require_credentials(
+            profile,
+            normalized["providers"],
+            normalized_credentials,
+            require_qdrant_key=False,
+        )
+        normalized_credentials = {
+            name: value
+            for name, value in normalized_credentials.items()
+            if name in required_credentials
+        }
 
     return ValidatedRuntimeSetup(
         profile=profile,
@@ -566,12 +593,13 @@ def qdrant_preflight(
     *,
     client_factory: Any | None = None,
 ) -> dict[str, Any]:
-    """Perform a read-only Qdrant connection and schema compatibility test.
+    """Perform a Qdrant connection/schema test and ensure Library filter indexes.
 
-    The function never creates, changes, or deletes a collection.  A missing
-    collection is a successful connection result: the first index job is the
-    operation that creates the profile-specific collection.  ``client_factory``
-    is injectable so API tests never need a live Cloud cluster.
+    A missing collection is a successful connection result: the first index
+    job creates the profile-specific collection. Existing compatible
+    collections receive idempotent keyword payload indexes required by the
+    Library's `video_id`/`window_id` filters. ``client_factory`` is injectable
+    so API tests never need a live Cloud cluster.
     """
 
     profile = setup.profile
@@ -589,6 +617,9 @@ def qdrant_preflight(
     ]
     result: dict[str, Any] = {
         "profile_id": profile.id,
+        "vector_store_target": str(
+            setup.configuration.get("vector_store_target", profile.qdrant_target)
+        ),
         "collection_name": profile.collection_name,
         "expected_schema": expected_schema,
         "reachable": False,
@@ -600,7 +631,12 @@ def qdrant_preflight(
         "timeout_seconds": timeout_seconds,
         "diagnostics": diagnostics,
     }
-    if profile.qdrant_target != "cloud":
+    vector_store_target = str(
+        setup.configuration.get("vector_store_target", profile.qdrant_target)
+    )
+    # Existing self-hosted sessions intentionally do not probe during setup.
+    # API-based sessions may now choose local Qdrant, and must verify it.
+    if profile.mode == "self_hosted":
         result.update(
             {
                 "reachable": True,
@@ -618,7 +654,14 @@ def qdrant_preflight(
         return result
 
     secrets = tuple(setup.credentials.values())
+    connection_stage = (
+        "qdrant_cloud_connection"
+        if vector_store_target == "cloud"
+        else "local_qdrant_connection"
+    )
+    store_label = "Qdrant Cloud" if vector_store_target == "cloud" else "local Qdrant"
     started_at = perf_counter()
+    client: Any | None = None
     try:
         if client_factory is None:
             from qdrant_client import QdrantClient
@@ -626,7 +669,11 @@ def qdrant_preflight(
             client_factory = QdrantClient
         client = client_factory(
             url=str(setup.configuration["qdrant_url"]),
-            api_key=setup.credentials["qdrant_api_key"],
+            api_key=(
+                setup.credentials["qdrant_api_key"]
+                if vector_store_target == "cloud"
+                else None
+            ),
             timeout=timeout_seconds,
         )
         exists = bool(client.collection_exists(profile.collection_name))
@@ -635,9 +682,13 @@ def qdrant_preflight(
         result["collection_exists"] = exists
         diagnostics.append(
             {
-                "stage": "qdrant_cloud_connection",
+                "stage": connection_stage,
                 "status": "passed",
-                "message": "Qdrant Cloud accepted the authenticated collection lookup.",
+                "message": (
+                    "Qdrant Cloud accepted the authenticated collection lookup."
+                    if vector_store_target == "cloud"
+                    else "Local Qdrant accepted the collection lookup."
+                ),
                 "elapsed_ms": elapsed_ms,
             }
         )
@@ -645,7 +696,7 @@ def qdrant_preflight(
             result.update(
                 {
                     "schema_valid": True,
-                    "warning": "Qdrant Cloud is reachable. The profile collection will be created by the first index run.",
+                    "warning": f"{store_label} is reachable. The profile collection will be created by the first index run.",
                 }
             )
             diagnostics.append(
@@ -682,11 +733,21 @@ def qdrant_preflight(
                 }
             )
         else:
+            from .profile_qdrant_store import ensure_window_payload_indexes
+
+            ensure_window_payload_indexes(client, profile.collection_name)
             diagnostics.append(
                 {
                     "stage": "collection_schema",
                     "status": "passed",
                     "message": "The existing collection matches the selected embedding profile.",
+                }
+            )
+            diagnostics.append(
+                {
+                    "stage": "payload_indexes",
+                    "status": "passed",
+                    "message": "Keyword indexes for video_id and window_id are ready for Library filters.",
                 }
             )
         return result
@@ -696,20 +757,36 @@ def qdrant_preflight(
         result["error"] = safe_error
         diagnostics.append(
             {
-                "stage": "qdrant_cloud_connection",
+                "stage": connection_stage,
                 "status": "failed",
-                "message": safe_error or "Qdrant Cloud did not complete the collection lookup.",
+                "message": safe_error or f"{store_label} did not complete the collection lookup.",
                 "elapsed_ms": round((perf_counter() - started_at) * 1000),
-                "next_action": _qdrant_preflight_next_action(exc, timeout_seconds),
+                "next_action": _qdrant_preflight_next_action(
+                    exc, timeout_seconds, vector_store_target
+                ),
             }
         )
         return result
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 - preflight already has its result
+                pass
 
 
-def _qdrant_preflight_next_action(exc: Exception, timeout_seconds: float) -> str:
-    """Return a safe, actionable next step for a Cloud preflight failure."""
+def _qdrant_preflight_next_action(
+    exc: Exception, timeout_seconds: float, vector_store_target: str
+) -> str:
+    """Return a safe, actionable next step for the selected Qdrant target."""
 
     description = str(exc).lower()
+    if vector_store_target == "local":
+        return (
+            "Start local Qdrant (for example `docker compose up -d qdrant`), "
+            "confirm it is listening on http://127.0.0.1:6333, then retry."
+        )
     if isinstance(exc, TimeoutError) or "timed out" in description or "timeout" in description:
         return (
             f"The lookup did not finish within {timeout_seconds:g} seconds. Check the Cloud endpoint, "
@@ -856,9 +933,13 @@ def _normalize_stage_aliases(
 
 
 def _require_credentials(
-    profile: RuntimeProfile, providers: Mapping[str, str], credentials: Mapping[str, str]
+    profile: RuntimeProfile,
+    providers: Mapping[str, str],
+    credentials: Mapping[str, str],
+    *,
+    require_qdrant_key: bool,
 ) -> set[str]:
-    required = {"qdrant_api_key"}
+    required = {"qdrant_api_key"} if require_qdrant_key else set()
     for stage, provider in providers.items():
         option = profile.option_for(stage, provider)
         if option.credential_name:
@@ -880,6 +961,18 @@ def _normalize_credentials(raw_credentials: Mapping[str, Any]) -> dict[str, str]
         if not stripped:
             raise ProviderConfigurationError(f"Credential '{name}' must not be empty")
         normalized[str(name)] = stripped
+    return normalized
+
+
+def _normalize_vector_store_target(profile: RuntimeProfile, value: Any) -> str:
+    """Choose the Qdrant placement without changing the embedding contract."""
+
+    target = profile.qdrant_target if value is None else value
+    if not isinstance(target, str) or target.strip() not in {"cloud", "local"}:
+        raise RuntimeProfileError("vector_store_target must be 'cloud' or 'local'")
+    normalized = target.strip()
+    if profile.mode == "self_hosted" and normalized != "local":
+        raise RuntimeProfileError("Self-hosted mode requires the local Qdrant vector store")
     return normalized
 
 
