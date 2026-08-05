@@ -45,14 +45,11 @@ VECTOR_NAMES: list[str] = list(VECTOR_CONFIG.keys())
 ENABLE_OCR: bool = _bool("ENABLE_OCR", True)
 ENABLE_OBJECTS: bool = _bool("ENABLE_OBJECTS", True)
 
-# Reciprocal Rank Fusion constant (used in Phase 2 fusion, defined here now)
+# Reciprocal Rank Fusion constant (consumed in fusion.py's rrf_fuse())
 RRF_K: int = _int("RRF_K", 60)
 
 # Default search depth per modality
 DEFAULT_TOP_K: int = _int("DEFAULT_TOP_K", 15)
-
-# Modalities below this weight are zeroed out and skipped in retrieval.
-MIN_MODALITY_WEIGHT: float = float(os.getenv("MIN_MODALITY_WEIGHT", "0.05"))
 
 # --- Query encoders (Phase 3) ---
 DEVICE: str = os.getenv("DEVICE", "cpu")

@@ -45,7 +45,6 @@ class SearchResultItem(BaseModel):
 
 class SearchResponse(BaseModel):
     results: list[SearchResultItem]
-    query_weights: dict[str, float]
 
 
 class FusedHit(BaseModel):

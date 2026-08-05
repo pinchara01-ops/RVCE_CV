@@ -126,21 +126,18 @@ def warmup() -> None:
     logger.info("Query encoders warmup complete")
 
 
-def encode_query(query: str, weights: dict[str, float]) -> dict[str, list[float]]:
-    """Encode `query` for every modality with weight > 0.
+def encode_query(query: str) -> dict[str, list[float]]:
+    """Encode `query` for all 4 modalities.
 
-    Skips zero/absent-weight modalities entirely (no model call, no compute).
+    Always encodes every modality (architecture change: query routing was
+    removed - Weighted RRF suppresses irrelevant modalities through rank,
+    so gating encoding on a router's per-query weights isn't needed).
     If encoding a modality fails mid-query (e.g. OOM), that modality is
     logged and dropped from the result - callers proceed with whatever
     modalities succeeded rather than failing the whole request.
     """
     vectors: dict[str, list[float]] = {}
-    for modality, weight in weights.items():
-        if weight <= 0.0:
-            continue
-        encode_fn = _ENCODERS.get(modality)
-        if encode_fn is None:
-            continue
+    for modality, encode_fn in _ENCODERS.items():
         try:
             vectors[modality] = encode_fn(query)
         except Exception as exc:  # noqa: BLE001 - one modality failing must not fail the request

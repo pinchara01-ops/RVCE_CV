@@ -113,17 +113,19 @@ def test_speech_and_caption_share_one_model_load():
     fake_loader.assert_called_once()  # second call hits the singleton cache
 
 
-def test_encode_query_only_encodes_nonzero_weight_modalities():
+def test_encode_query_always_encodes_all_four_modalities():
+    """Architecture change: query routing was removed, so encode_query no
+    longer takes a weights param and always calls all 4 encoders - RRF
+    fusion suppresses irrelevant modalities through rank instead."""
     dims = _dims()
     with patch.object(encoders, "_load_xclip", return_value=(_FakeTextModel(dims["visual"]), _FakeTokenizer())), \
-         patch.object(encoders, "_load_clap") as mock_clap_loader, \
-         patch.object(encoders, "_load_bge_m3") as mock_bge_loader:
-        weights = {"visual": 1.0, "audio": 0.0, "speech": 0.0, "caption": 0.0}
-        result = encoders.encode_query("person in a red jacket", weights)
+         patch.object(encoders, "_load_clap", return_value=(_FakeTextModel(dims["audio"]), _FakeTokenizer())) as mock_clap_loader, \
+         patch.object(encoders, "_load_bge_m3", return_value=(_FakeSentenceTransformer(dims["speech"]), None)) as mock_bge_loader:
+        result = encoders.encode_query("person in a red jacket")
 
-    assert set(result.keys()) == {"visual"}
-    mock_clap_loader.assert_not_called()
-    mock_bge_loader.assert_not_called()
+    assert set(result.keys()) == {"visual", "audio", "speech", "caption"}
+    mock_clap_loader.assert_called_once()
+    mock_bge_loader.assert_called_once()
 
 
 def test_encode_query_partial_failure_drops_only_failing_modality():
@@ -133,18 +135,15 @@ def test_encode_query_partial_failure_drops_only_failing_modality():
         raise RuntimeError("simulated OOM")
 
     with patch.object(encoders, "_load_xclip", return_value=(_FakeTextModel(dims["visual"]), _FakeTokenizer())), \
-         patch.object(encoders, "_load_clap", side_effect=_broken_loader):
-        weights = {"visual": 0.5, "audio": 0.5, "speech": 0.0, "caption": 0.0}
-        result = encoders.encode_query("man shouting in a blue shirt", weights)
+         patch.object(encoders, "_load_clap", side_effect=_broken_loader), \
+         patch.object(encoders, "_load_bge_m3", return_value=(_FakeSentenceTransformer(dims["speech"]), None)):
+        result = encoders.encode_query("man shouting in a blue shirt")
 
     assert "visual" in result
     assert "audio" not in result
+    assert "speech" in result
+    assert "caption" in result
     _assert_valid_vector(result["visual"], dims["visual"])
-
-
-def test_encode_query_empty_weights_encodes_nothing():
-    result = encoders.encode_query("anything", {"visual": 0.0, "audio": 0.0, "speech": 0.0, "caption": 0.0})
-    assert result == {}
 
 
 def test_warmup_loads_all_three_models_once():

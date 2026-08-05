@@ -1,7 +1,12 @@
-"""Weighted Reciprocal Rank Fusion across per-modality search results.
+"""Reciprocal Rank Fusion across per-modality search results.
 
-RRF_K lives in config.py (added in Phase 2 for the router but never
-consumed there - this is the first place it's actually used).
+Unweighted (architecture change: query routing was removed entirely).
+There's no more per-query modality weight signal to multiply in - all 4
+modalities are always searched, and RRF fuses purely on rank position. A
+modality irrelevant to a given query naturally produces low-relevance
+hits that rank far down its own list, contributing a tiny 1/(k+rank)
+score; fusion doesn't need to be told in advance which modality matters,
+rank position already reflects it.
 """
 import logging
 
@@ -11,23 +16,21 @@ from query_retrieval.models import FusedHit, WindowPayload
 logger = logging.getLogger(__name__)
 
 
-def weighted_rrf(
+def rrf_fuse(
     results: dict[str, list[dict]],
-    weights: dict[str, float],
     k: int = config.RRF_K,
     top_k: int | None = None,
 ) -> list[FusedHit]:
     """Fuse ranked per-modality hit lists into one ranked list.
 
     For each modality's list, a hit at 1-indexed rank `rank` contributes
-    `weight * (1 / (k + rank))` to that window_id's fused score.
-    Contributions accumulate across modalities for the same window_id -
-    a window appearing in multiple modality lists sums every contribution,
-    it is never overwritten.
+    `1 / (k + rank)` to that window_id's fused score - every modality
+    contributes on equal footing. Contributions accumulate across
+    modalities for the same window_id - a window appearing in multiple
+    modality lists sums every contribution, it is never overwritten.
 
-    `results` should only contain modalities the caller actually searched
-    (nonzero router weight, successfully encoded), but a missing/zero-weight/
-    empty entry is handled defensively rather than crashing.
+    A missing or empty modality entry in `results` is handled defensively
+    rather than crashing.
 
     Returns hits sorted by fused_score descending, truncated to `top_k` if
     given (this is the final top_k from the API request - per-modality
@@ -38,8 +41,7 @@ def weighted_rrf(
     matched: dict[str, list[str]] = {}
 
     for modality, hits in results.items():
-        weight = weights.get(modality, 0.0)
-        if not hits or weight <= 0.0:
+        if not hits:
             continue
 
         for rank, hit in enumerate(hits, start=1):
@@ -47,7 +49,7 @@ def weighted_rrf(
             if window_id is None:
                 continue
 
-            contribution = weight * (1.0 / (k + rank))
+            contribution = 1.0 / (k + rank)
             scores[window_id] = scores.get(window_id, 0.0) + contribution
 
             if window_id not in payloads:

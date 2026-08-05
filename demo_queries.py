@@ -8,8 +8,9 @@ Usage:
 
 Uses the real encoder models (X-CLIP/CLAP/BGE-M3) - first run may take a
 few minutes to load; set HF_HUB_OFFLINE=1 once they're cached locally to
-cut that to ~10s. Query classification is rule-based only (V1 architecture,
-see README.md) - deterministic, no network/API dependency.
+cut that to ~10s. No query router (see README.md) - every query encodes
+and searches all 4 modalities unconditionally; RRF fusion suppresses
+irrelevant ones through rank.
 """
 import time
 
@@ -38,8 +39,7 @@ QUERIES = [
 
 def _print_result(query: str, body: dict, elapsed: float) -> None:
     print(f"\n{'=' * 70}")
-    print(f"QUERY: {query!r}")
-    print(f"  weights: {body['query_weights']}   ({elapsed * 1000:.0f}ms)")
+    print(f"QUERY: {query!r}   ({elapsed * 1000:.0f}ms)")
     if not body["results"]:
         print("  (no results)")
         return
