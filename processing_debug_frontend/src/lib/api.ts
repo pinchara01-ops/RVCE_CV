@@ -39,6 +39,19 @@ export type Job = {
   };
   errors: { message: string; window_id?: string }[];
   model_status: ModelStatus[];
+  /** Chronological, structured updates emitted by the indexing worker. */
+  activity?: JobActivity[];
+};
+
+export type JobActivity = {
+  /** Monotonic per-job sequence, used to keep rendered entries stable. */
+  sequence: number;
+  /** ISO timestamp or Unix seconds, depending on the API process version. */
+  timestamp: string | number;
+  level: "info" | "warning" | "error";
+  area: string;
+  message: string;
+  details?: Record<string, unknown>;
 };
 
 export type WindowRow = {
@@ -171,8 +184,18 @@ export type SearchResponse = {
   query_decomposition?: SearchDecomposition | null;
 };
 
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly body: string,
+  ) {
+    super(body || `Request failed (${status}).`);
+    this.name = "ApiError";
+  }
+}
+
 export async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(API + path, { ...init, cache: "no-store" });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw new ApiError(response.status, await response.text());
   return response.json();
 }

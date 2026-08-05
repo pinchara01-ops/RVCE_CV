@@ -1,6 +1,8 @@
 import math
 from typing import Protocol
 
+from .model_cache import model_load_kwargs
+
 EMPTY_TEXT_SENTINEL = "[NO SPEECH]"
 
 
@@ -16,7 +18,11 @@ class BgeM3TextEncoder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self.model_name, device=self.device)
+            self._model = SentenceTransformer(
+                self.model_name,
+                device=self.device,
+                **model_load_kwargs(self.model_name),
+            )
         result = [
             x.tolist()
             for x in self._model.encode(
