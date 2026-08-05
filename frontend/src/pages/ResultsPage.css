@@ -1,0 +1,35 @@
+.results-main {
+  flex: 1;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 40px 20px 60px;
+}
+
+.results-status {
+  display: flex;
+  gap: 18px;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--color-ink-muted);
+}
+
+.results-section-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 36px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border-strong);
+}
+
+.results-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.results-empty {
+  padding: 24px 0;
+  color: var(--color-ink-faint);
+  font-size: 13px;
+}
