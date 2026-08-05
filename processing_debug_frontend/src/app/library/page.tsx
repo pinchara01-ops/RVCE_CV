@@ -56,10 +56,25 @@ function LibraryContent() {
       return;
     }
     try {
-      const [nextHealth, data] = await Promise.all([
-        jsonFetch<IndexHealth>(`/api/index/health${profileQuery}`),
-        jsonFetch<{ videos: IndexedVideo[] }>(`/api/index/videos${profileQuery}`),
-      ]);
+      let nextHealth: IndexHealth | undefined;
+      let data: { videos: IndexedVideo[] } | undefined;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          [nextHealth, data] = await Promise.all([
+            jsonFetch<IndexHealth>(`/api/index/health${profileQuery}`),
+            jsonFetch<{ videos: IndexedVideo[] }>(`/api/index/videos${profileQuery}`),
+          ]);
+          if (nextHealth.reachable) break;
+          lastError = new Error(nextHealth.error || "Qdrant is temporarily unavailable.");
+        } catch (cause) {
+          lastError = cause;
+        }
+        if (attempt < 2) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 1000 * (attempt + 1)));
+        }
+      }
+      if (!nextHealth?.reachable || !data) throw lastError || new Error("Qdrant is temporarily unavailable.");
       setHealth(nextHealth);
       setVideos(data.videos);
     } catch (cause) {

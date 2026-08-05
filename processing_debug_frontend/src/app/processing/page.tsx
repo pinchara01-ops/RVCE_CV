@@ -46,6 +46,7 @@ function ProcessingContent() {
   const searchParams = useSearchParams();
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [health, setHealth] = useState<IndexHealth>();
+  const [healthRefreshKey, setHealthRefreshKey] = useState(0);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [vlmMode, setVlmMode] = useState("selection_only");
@@ -77,8 +78,21 @@ function ProcessingContent() {
   useEffect(() => {
     fetch(`${API}/api/processing/preflight`).then((response) => response.json())
       .then((data) => setModels(data.models)).catch((cause) => setError(displayError(cause)));
-    fetch(`${API}/api/index/health`).then((response) => response.json())
-      .then(setHealth).catch((cause) => setError(displayError(cause)));
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    const loadHealth = async (attempt = 0) => {
+      try {
+        const data = await jsonFetch<IndexHealth>("/api/index/health");
+        if (cancelled) return;
+        setHealth(data);
+        if (!data.reachable && attempt < 2) {
+          retryTimer = window.setTimeout(() => { void loadHealth(attempt + 1); }, 1000 * (attempt + 1));
+        }
+      } catch (cause) {
+        if (!cancelled) setError(displayError(cause));
+      }
+    };
+    void loadHealth();
     jsonFetch<{ profiles: RuntimeProfile[] }>("/api/runtime/profiles")
       .then((data) => {
         setProfiles(data.profiles);
@@ -87,7 +101,11 @@ function ProcessingContent() {
         }
       })
       .catch((cause) => setRuntimeMessage(`Runtime setup is unavailable: ${displayError(cause)}`));
-  }, []);
+    return () => {
+      cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, [healthRefreshKey]);
 
   useEffect(() => {
     const sessionId = requestedRuntimeSessionId || loadRuntimeSessionId();
@@ -289,6 +307,7 @@ function ProcessingContent() {
       {error && <p className="error panel">{error}</p>}
       <section className={`status-strip ${isApiBased ? (runtimeMessage ? "ready" : "warning") : health ? (health.reachable && health.schema_valid !== false ? "ready" : "warning") : ""}`}>
         <div><strong>{isApiBased ? "Qdrant Cloud setup" : `Qdrant ${health ? (health.reachable ? "connected" : "not ready") : "checking"}`}</strong><span>{isApiBased ? (runtimeMessage || "Enter Qdrant Cloud details below; a read-only preflight runs before upload.") : health ? (health.collection_exists ? `${health.points_count} indexed windows in ${health.collection_name}` : health.error ?? "The shared collection will be created when you index your first video.") : "Checking the shared collection…"}</span>{!isApiBased && health?.schema_errors?.map((message) => <span className="error" key={message}>{message}</span>)}</div>
+        {!isApiBased && <button type="button" className="link-button" onClick={() => { setHealth(undefined); setHealthRefreshKey((value) => value + 1); }}>Retry Qdrant</button>}
         <Link href="/library">Inspect library</Link>
       </section>
 

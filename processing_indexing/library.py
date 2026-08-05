@@ -29,13 +29,26 @@ def _client(settings: Settings) -> QdrantClient:
     )
 
 
+def _health_timeout_seconds(settings: Settings) -> float:
+    """Give a cold local Qdrant enough time without blocking the UI indefinitely."""
+    return min(settings.qdrant_timeout_seconds, 5.0)
+
+
 def _health_client(settings: Settings) -> QdrantClient:
     """Use a short timeout for the UI health probe, which is safe to retry."""
     return QdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key,
-        timeout=min(settings.qdrant_timeout_seconds, 2.0),
+        timeout=_health_timeout_seconds(settings),
     )
+
+
+def _close_client(client: QdrantClient) -> None:
+    """Release HTTP sockets from short-lived read-model clients promptly."""
+    try:
+        client.close()
+    except Exception:  # noqa: BLE001 - a successful read must not fail on cleanup
+        pass
 
 
 def _summary(vector: list[float]) -> dict[str, Any]:
@@ -72,59 +85,62 @@ def _collection_health_once(
     expected_vector_dims: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     client = _health_client(settings)
-    if not client.collection_exists(settings.collection_name):
-        return {
-            "reachable": True,
-            "collection_exists": False,
-            "collection_name": settings.collection_name,
-            "points_count": 0,
-            "vectors": {},
-            "schema_valid": True,
-            "schema_errors": [],
+    try:
+        if not client.collection_exists(settings.collection_name):
+            return {
+                "reachable": True,
+                "collection_exists": False,
+                "collection_name": settings.collection_name,
+                "points_count": 0,
+                "vectors": {},
+                "schema_valid": True,
+                "schema_errors": [],
+            }
+        info = client.get_collection(settings.collection_name)
+        vectors = info.config.params.vectors
+        if not isinstance(vectors, dict):
+            return {
+                "reachable": True,
+                "collection_exists": True,
+                "collection_name": settings.collection_name,
+                "points_count": info.points_count,
+                "vectors": {},
+                "schema_valid": False,
+                "schema_errors": [
+                    "The collection has one unnamed vector; this app requires four named vectors."
+                ],
+            }
+        vector_info = {
+            name: {
+                "dimensions": value.size,
+                "distance": getattr(value.distance, "value", str(value.distance)),
+            }
+            for name, value in vectors.items()
         }
-    info = client.get_collection(settings.collection_name)
-    vectors = info.config.params.vectors
-    if not isinstance(vectors, dict):
+        expected = dict(expected_vector_dims or VECTOR_DIMS)
+        schema_errors = []
+        for name, dimensions in expected.items():
+            value = vectors.get(name)
+            if value is None:
+                schema_errors.append(f"Missing required '{name}' vector.")
+            elif value.size != dimensions:
+                schema_errors.append(
+                    f"'{name}' has {value.size} dimensions; expected {dimensions}."
+                )
+        for name in vectors:
+            if name not in expected:
+                schema_errors.append(f"Unexpected '{name}' vector in the collection.")
         return {
             "reachable": True,
             "collection_exists": True,
             "collection_name": settings.collection_name,
             "points_count": info.points_count,
-            "vectors": {},
-            "schema_valid": False,
-            "schema_errors": [
-                "The collection has one unnamed vector; this app requires four named vectors."
-            ],
+            "vectors": vector_info,
+            "schema_valid": not schema_errors,
+            "schema_errors": schema_errors,
         }
-    vector_info = {
-        name: {
-            "dimensions": value.size,
-            "distance": getattr(value.distance, "value", str(value.distance)),
-        }
-        for name, value in vectors.items()
-    }
-    expected = dict(expected_vector_dims or VECTOR_DIMS)
-    schema_errors = []
-    for name, dimensions in expected.items():
-        value = vectors.get(name)
-        if value is None:
-            schema_errors.append(f"Missing required '{name}' vector.")
-        elif value.size != dimensions:
-            schema_errors.append(
-                f"'{name}' has {value.size} dimensions; expected {dimensions}."
-            )
-    for name in vectors:
-        if name not in expected:
-            schema_errors.append(f"Unexpected '{name}' vector in the collection.")
-    return {
-        "reachable": True,
-        "collection_exists": True,
-        "collection_name": settings.collection_name,
-        "points_count": info.points_count,
-        "vectors": vector_info,
-        "schema_valid": not schema_errors,
-        "schema_errors": schema_errors,
-    }
+    finally:
+        _close_client(client)
 
 
 def collection_health(
@@ -177,30 +193,33 @@ def list_windows(
 ) -> list[dict[str, Any]]:
     settings = settings or Settings.from_env()
     client = _client(settings)
-    if not client.collection_exists(settings.collection_name):
-        return []
-    records, _ = client.scroll(
-        collection_name=settings.collection_name,
-        scroll_filter=_filter(video_id=video_id),
-        limit=max(1, min(limit, 500)),
-        with_payload=True,
-        with_vectors=include_vectors,
-    )
-    result = []
-    for record in records:
-        entry = {
-            "point_id": str(record.id),
-            "payload": _safe_payload(record.payload),
-        }
-        if include_vectors:
-            vectors = record.vector or {}
-            entry["vectors"] = {
-                name: _summary(values)
-                for name, values in vectors.items()
-                if isinstance(values, list)
+    try:
+        if not client.collection_exists(settings.collection_name):
+            return []
+        records, _ = client.scroll(
+            collection_name=settings.collection_name,
+            scroll_filter=_filter(video_id=video_id),
+            limit=max(1, min(limit, 500)),
+            with_payload=True,
+            with_vectors=include_vectors,
+        )
+        result = []
+        for record in records:
+            entry = {
+                "point_id": str(record.id),
+                "payload": _safe_payload(record.payload),
             }
-        result.append(entry)
-    return sorted(result, key=lambda row: (row["payload"].get("video_id", ""), row["payload"].get("start", 0)))
+            if include_vectors:
+                vectors = record.vector or {}
+                entry["vectors"] = {
+                    name: _summary(values)
+                    for name, values in vectors.items()
+                    if isinstance(values, list)
+                }
+            result.append(entry)
+        return sorted(result, key=lambda row: (row["payload"].get("video_id", ""), row["payload"].get("start", 0)))
+    finally:
+        _close_client(client)
 
 
 def get_window(
@@ -211,27 +230,30 @@ def get_window(
 ) -> dict[str, Any] | None:
     settings = settings or Settings.from_env()
     client = _client(settings)
-    if not client.collection_exists(settings.collection_name):
-        return None
-    records, _ = client.scroll(
-        collection_name=settings.collection_name,
-        scroll_filter=_filter(window_id=window_id),
-        limit=1,
-        with_payload=True,
-        with_vectors=include_vectors,
-    )
-    if not records:
-        return None
-    record = records[0]
-    result = {"point_id": str(record.id), "payload": _safe_payload(record.payload)}
-    if include_vectors:
-        vectors = record.vector or {}
-        result["vectors"] = {
-            name: _summary(values)
-            for name, values in vectors.items()
-            if isinstance(values, list)
-        }
-    return result
+    try:
+        if not client.collection_exists(settings.collection_name):
+            return None
+        records, _ = client.scroll(
+            collection_name=settings.collection_name,
+            scroll_filter=_filter(window_id=window_id),
+            limit=1,
+            with_payload=True,
+            with_vectors=include_vectors,
+        )
+        if not records:
+            return None
+        record = records[0]
+        result = {"point_id": str(record.id), "payload": _safe_payload(record.payload)}
+        if include_vectors:
+            vectors = record.vector or {}
+            result["vectors"] = {
+                name: _summary(values)
+                for name, values in vectors.items()
+                if isinstance(values, list)
+            }
+        return result
+    finally:
+        _close_client(client)
 
 
 def list_videos(settings: Settings | None = None, limit: int = 500) -> list[dict[str, Any]]:
@@ -265,15 +287,18 @@ def list_videos(settings: Settings | None = None, limit: int = 500) -> list[dict
 def media_path_for_window(window_id: str, settings: Settings | None = None) -> Path | None:
     settings = settings or Settings.from_env()
     client = _client(settings)
-    if not client.collection_exists(settings.collection_name):
-        return None
-    records, _ = client.scroll(
-        collection_name=settings.collection_name,
-        scroll_filter=_filter(window_id=window_id),
-        limit=1,
-        with_payload=["source_path"],
-        with_vectors=False,
-    )
-    if not records:
-        return None
-    return media_path_for_source((records[0].payload or {}).get("source_path"))
+    try:
+        if not client.collection_exists(settings.collection_name):
+            return None
+        records, _ = client.scroll(
+            collection_name=settings.collection_name,
+            scroll_filter=_filter(window_id=window_id),
+            limit=1,
+            with_payload=["source_path"],
+            with_vectors=False,
+        )
+        if not records:
+            return None
+        return media_path_for_source((records[0].payload or {}).get("source_path"))
+    finally:
+        _close_client(client)

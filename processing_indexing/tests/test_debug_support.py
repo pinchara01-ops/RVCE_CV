@@ -73,6 +73,34 @@ def test_collection_health_retries_a_transient_qdrant_timeout(monkeypatch):
     assert health["collection_exists"] is False
 
 
+def test_health_probe_allows_a_slow_local_qdrant_response():
+    from processing_indexing import library
+
+    assert library._health_timeout_seconds(Settings(qdrant_timeout_seconds=10)) == 5
+    assert library._health_timeout_seconds(Settings(qdrant_timeout_seconds=3)) == 3
+
+
+def test_collection_health_closes_its_short_lived_probe_client(monkeypatch):
+    from processing_indexing import library
+
+    class HealthyClient:
+        closed = False
+
+        def collection_exists(self, _collection_name):
+            return False
+
+        def close(self):
+            self.closed = True
+
+    client = HealthyClient()
+    monkeypatch.setattr(library, "_health_client", lambda _settings: client)
+
+    health = library.collection_health(Settings())
+
+    assert health["reachable"] is True
+    assert client.closed is True
+
+
 def test_malformed_upload_has_an_actionable_recovery_message():
     from processing_indexing import debug_api
 
