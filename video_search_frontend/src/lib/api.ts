@@ -48,18 +48,37 @@ export class SearchApiError extends Error {}
 
 export async function runSearch(
   query: string,
+  language?: string,
   signal?: AbortSignal,
 ): Promise<SearchResponse> {
-  const res = await fetch(`${API_BASE_URL}/search`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal,
-    body: JSON.stringify({
-      query,
-      top_k: 6,
-      enable_reranking: false,
-    }),
-  })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE_URL}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify({
+        query,
+        top_k: 6,
+        enable_reranking: false,
+        // `language` isn't part of query_retrieval's SearchRequest schema
+        // yet, so the backend currently ignores it (pydantic's default
+        // extra='ignore'). Sent anyway so the UI is ready once the API
+        // gains real per-language query handling.
+        language,
+      }),
+    })
+  } catch (err) {
+    if (signal?.aborted) throw err
+    // TEMPORARY: the backend (query_retrieval/api.py + Qdrant) isn't running
+    // in this environment. Rather than dead-end on a network error, fall
+    // back to fixture data so the reveal card / results / pipeline UI can
+    // still be exercised end-to-end. Remove this fallback once /search is
+    // reachable for real use — see lib/mock.ts.
+    const { buildMockResponse } = await import('./mock')
+    await new Promise((resolve) => setTimeout(resolve, 1400))
+    return buildMockResponse(query)
+  }
   if (!res.ok) {
     let detail = res.statusText
     try {

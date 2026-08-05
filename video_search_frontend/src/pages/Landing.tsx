@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Nav } from '../components/Nav'
 import { BackgroundVideo } from '../components/BackgroundVideo'
 import { SearchBar } from '../components/SearchBar'
+import { LanguageSelect } from '../components/LanguageSelect'
 import { StageProgress } from '../components/StageProgress'
 import { ResultsTab } from '../components/ResultsTab'
 import { PipelineTab } from '../components/PipelineTab'
-import { runSearch, SearchApiError } from '../lib/api'
+import { TopResultCard } from '../components/TopResultCard'
+import { runSearch, SearchApiError, type SearchResultItem } from '../lib/api'
 import {
   buildCompletedStages,
   buildInFlightStages,
@@ -19,6 +21,7 @@ type Tab = 'results' | 'pipeline'
 
 export function Landing() {
   const [query, setQuery] = useState('')
+  const [language, setLanguage] = useState('english')
   const [turns, setTurns] = useState<Turn[]>([])
   const [tab, setTab] = useState<Tab>('results')
   const [inFlightId, setInFlightId] = useState<string | null>(null)
@@ -29,7 +32,28 @@ export function Landing() {
   const [latestModalities, setLatestModalities] = useState<ModalityStatus[]>([])
   const [latestMocked, setLatestMocked] = useState(false)
 
+  const [displayedResult, setDisplayedResult] = useState<SearchResultItem | null>(null)
+  const [displayedCount, setDisplayedCount] = useState(0)
+
   const isLoading = inFlightId !== null
+  const lastTurn = turns[turns.length - 1] ?? null
+  const cardVisible =
+    !isLoading &&
+    lastTurn?.status === 'done' &&
+    (lastTurn.response?.results.length ?? 0) > 0
+
+  // Keep the previous top result rendered while the card collapses, so the
+  // grid-row transition animates a shrink instead of the content vanishing.
+  useEffect(() => {
+    if (cardVisible && lastTurn?.response) {
+      setDisplayedResult(lastTurn.response.results[0])
+      setDisplayedCount(lastTurn.response.results.length)
+    }
+  }, [cardVisible, lastTurn])
+
+  const scrollToPipeline = () => {
+    document.getElementById('pipeline-section')?.scrollIntoView({ behavior: 'smooth' })
+  }
 
   useEffect(() => {
     if (!isLoading) return
@@ -71,7 +95,7 @@ export function Landing() {
     setTurns((prev) => [...prev, turn])
 
     try {
-      const response = await runSearch(q)
+      const response = await runSearch(q, language)
       const total = performance.now() - startedAt
       const { stages, modalities } = buildCompletedStages(response, total)
       const hasMocked = stages.some((s) => !s.isReal)
@@ -130,12 +154,39 @@ export function Landing() {
               </p>
 
               <div className="mx-auto mt-10 w-full max-w-xl">
-                <SearchBar
-                  value={query}
-                  onChange={setQuery}
-                  onSubmit={submitQuery}
-                  disabled={isLoading}
-                />
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <LanguageSelect value={language} onChange={setLanguage} disabled={isLoading} />
+                  <div className="flex-1">
+                    <SearchBar
+                      value={query}
+                      onChange={setQuery}
+                      onSubmit={submitQuery}
+                      disabled={isLoading}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <StageProgress active={isLoading} label={progress.label} progress={progress.progress} />
+
+                  <div
+                    className="grid transition-[grid-template-rows,opacity] duration-500 ease-out"
+                    style={{
+                      gridTemplateRows: cardVisible ? '1fr' : '0fr',
+                      opacity: cardVisible ? 1 : 0,
+                    }}
+                  >
+                    <div className="overflow-hidden">
+                      {displayedResult && (
+                        <TopResultCard
+                          result={displayedResult}
+                          resultCount={displayedCount}
+                          onViewAll={scrollToPipeline}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -146,8 +197,6 @@ export function Landing() {
         id="pipeline-section"
         className="mx-auto w-full max-w-3xl scroll-mt-10 px-6 py-16"
       >
-        <StageProgress active={isLoading} label={progress.label} progress={progress.progress} />
-
         <div className="liquid-glass overflow-hidden rounded-2xl">
           <div className="flex border-b border-ink-700">
             {(['results', 'pipeline'] as Tab[]).map((t) => (
