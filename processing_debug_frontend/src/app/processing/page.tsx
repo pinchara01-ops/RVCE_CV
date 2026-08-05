@@ -17,6 +17,8 @@ import {
   loadRuntimeSessionId,
   storeRuntimeSessionId,
 } from "@/lib/api";
+import { CloudPreflightDiagnostics } from "@/components/CloudPreflightDiagnostics";
+import { summarizeCloudPreflight } from "@/lib/preflight";
 
 async function errorMessage(response: Response): Promise<string> {
   const body = await response.text();
@@ -53,6 +55,8 @@ function ProcessingContent() {
   const [profiles, setProfiles] = useState<RuntimeProfile[]>([]);
   const [profileId, setProfileId] = useState(() => searchParams.get("profile_id") || "self-hosted-v1");
   const [runtimeMessage, setRuntimeMessage] = useState("");
+  const [runtimePreflight, setRuntimePreflight] = useState<RuntimePreflight>();
+  const [runtimePreflightCheckedAt, setRuntimePreflightCheckedAt] = useState<string>();
   const [configuredRuntimeSession, setConfiguredRuntimeSession] = useState<RuntimeSession>();
   const requestedRuntimeSessionId = searchParams.get("runtime_session_id");
   const activeProfile = profiles.find((profile) => profile.id === profileId);
@@ -74,6 +78,7 @@ function ProcessingContent() {
   const effectiveSelfHostedVlmMode = hasConfiguredSelfHostedSession
     ? architectureVlmMode
     : vlmMode;
+  const cloudPreflightSummary = runtimePreflight ? summarizeCloudPreflight(runtimePreflight) : undefined;
 
   useEffect(() => {
     fetch(`${API}/api/processing/preflight`).then((response) => response.json())
@@ -214,14 +219,12 @@ function ProcessingContent() {
           `/api/runtime/session/${encodeURIComponent(session.session_id)}/preflight`,
           { method: "POST" },
         );
-        setRuntimeMessage([
-          preflight.reachable ? "Qdrant Cloud is reachable" : preflight.error,
-          preflight.collection_exists ? "profile collection found" : "profile collection will be created on the first run",
-          ...(preflight.schema_errors ?? []),
-          ...(preflight.warnings ?? []),
-        ].filter(Boolean).join(" · "));
+        setRuntimePreflight(preflight);
+        setRuntimePreflightCheckedAt(new Date().toISOString());
+        const summary = summarizeCloudPreflight(preflight);
+        setRuntimeMessage(`${summary.headline}: ${summary.message}`);
         if (!preflight.reachable || preflight.schema_valid === false) {
-          throw new Error("Cloud setup did not pass preflight. Check the connection details above and try again.");
+          throw new Error(`${summary.headline}: ${summary.message}${summary.nextAction ? ` ${summary.nextAction}` : ""}`);
         }
         setConfiguredRuntimeSession(session);
         storeRuntimeSessionId(session.session_id);
@@ -305,11 +308,12 @@ function ProcessingContent() {
       </div>
 
       {error && <p className="error panel">{error}</p>}
-      <section className={`status-strip ${isApiBased ? (runtimeMessage ? "ready" : "warning") : health ? (health.reachable && health.schema_valid !== false ? "ready" : "warning") : ""}`}>
-        <div><strong>{isApiBased ? "Qdrant Cloud setup" : `Qdrant ${health ? (health.reachable ? "connected" : "not ready") : "checking"}`}</strong><span>{isApiBased ? (runtimeMessage || "Enter Qdrant Cloud details below; a read-only preflight runs before upload.") : health ? (health.collection_exists ? `${health.points_count} indexed windows in ${health.collection_name}` : health.error ?? "The shared collection will be created when you index your first video.") : "Checking the shared collection…"}</span>{!isApiBased && health?.schema_errors?.map((message) => <span className="error" key={message}>{message}</span>)}</div>
+      <section className={`status-strip ${isApiBased ? (cloudPreflightSummary?.tone ?? (runtimeMessage ? "ready" : "warning")) : health ? (health.reachable && health.schema_valid !== false ? "ready" : "warning") : ""}`}>
+        <div><strong>{isApiBased ? (cloudPreflightSummary?.headline ?? "Qdrant Cloud setup") : `Qdrant ${health ? (health.reachable ? "connected" : "not ready") : "checking"}`}</strong><span>{isApiBased ? (cloudPreflightSummary?.message || runtimeMessage || "Enter Qdrant Cloud details below; a read-only preflight runs before upload.") : health ? (health.collection_exists ? `${health.points_count} indexed windows in ${health.collection_name}` : health.error ?? "The shared collection will be created when you index your first video.") : "Checking the shared collection…"}</span>{!isApiBased && health?.schema_errors?.map((message) => <span className="error" key={message}>{message}</span>)}</div>
         {!isApiBased && <button type="button" className="link-button" onClick={() => { setHealth(undefined); setHealthRefreshKey((value) => value + 1); }}>Retry Qdrant</button>}
         <Link href="/library">Inspect library</Link>
       </section>
+      {isApiBased && <CloudPreflightDiagnostics preflight={runtimePreflight} checkedAt={runtimePreflightCheckedAt} />}
 
       <form onSubmit={submit} className="processing-form">
         <section className="form-section">
@@ -320,7 +324,7 @@ function ProcessingContent() {
               { id: "api-gemini-free-v1", label: "API-based", mode: "api-based", description: "Gemini APIs and Qdrant Cloud. No local model downloads or Docker.", collection_name: "video_windows_api_gemini_free" },
             ]).map((profile) => (
               <label className={`profile-option ${profile.id === profileId ? "selected" : ""}`} key={profile.id}>
-                <input type="radio" name="run_profile" value={profile.id} checked={profile.id === profileId} onChange={() => { setProfileId(profile.id); setRuntimeMessage(""); if (configuredRuntimeSession?.profile.id !== profile.id) setConfiguredRuntimeSession(undefined); }} />
+                <input type="radio" name="run_profile" value={profile.id} checked={profile.id === profileId} onChange={() => { setProfileId(profile.id); setRuntimeMessage(""); setRuntimePreflight(undefined); setRuntimePreflightCheckedAt(undefined); if (configuredRuntimeSession?.profile.id !== profile.id) setConfiguredRuntimeSession(undefined); }} />
                 <span><strong>{profile.label}</strong><small>{profile.description}</small><code>{profile.collection_name}</code></span>
               </label>
             ))}

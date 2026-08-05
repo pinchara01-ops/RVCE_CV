@@ -13,6 +13,8 @@ import {
   jsonFetch,
   storeRuntimeSessionId,
 } from "@/lib/api";
+import { CloudPreflightDiagnostics } from "@/components/CloudPreflightDiagnostics";
+import { summarizeCloudPreflight } from "@/lib/preflight";
 
 type StageKey = "transcription" | "media_embedding" | "text_embedding" | "caption" | "verification" | "query_decomposition" | "reranker";
 type SecretName = "gemini_api_key" | "openai_api_key" | "nvidia_api_key";
@@ -244,6 +246,8 @@ export default function ArchitecturePage() {
   const [cloudConsent, setCloudConsent] = useState(false);
   const [activationMessage, setActivationMessage] = useState("");
   const [error, setError] = useState("");
+  const [runtimePreflight, setRuntimePreflight] = useState<RuntimePreflight>();
+  const [runtimePreflightCheckedAt, setRuntimePreflightCheckedAt] = useState<string>();
   const [activating, setActivating] = useState(false);
 
   useEffect(() => {
@@ -291,6 +295,8 @@ export default function ArchitecturePage() {
     setSelections(nextSelections);
     setError("");
     setActivationMessage("");
+    setRuntimePreflight(undefined);
+    setRuntimePreflightCheckedAt(undefined);
   }
 
   function selectStage(stage: StageKey, value: string) {
@@ -309,6 +315,8 @@ export default function ArchitecturePage() {
     if (!activeProfile) return;
     setError("");
     setActivationMessage("");
+    setRuntimePreflight(undefined);
+    setRuntimePreflightCheckedAt(undefined);
 
     const providers = Object.fromEntries(STAGE_KEYS.map((stage) => [stage, selectedOptions[stage]?.provider])) as RuntimeSessionRequest["providers"];
     const models = Object.fromEntries(STAGE_KEYS.map((stage) => [stage, selectedOptions[stage]?.model ?? ""]));
@@ -378,8 +386,11 @@ export default function ArchitecturePage() {
         `/api/runtime/session/${encodeURIComponent(session.session_id)}/preflight`,
         { method: "POST" },
       );
+      setRuntimePreflight(preflight);
+      setRuntimePreflightCheckedAt(new Date().toISOString());
+      const summary = summarizeCloudPreflight(preflight);
       if (!preflight.reachable || preflight.schema_valid === false) {
-        throw new Error(preflight.error || "Qdrant Cloud did not pass the architecture preflight. Check the storage block and retry.");
+        throw new Error(`${summary.headline}: ${summary.message}${summary.nextAction ? ` ${summary.nextAction}` : ""}`);
       }
       storeRuntimeSessionId(session.session_id);
       // Ownership has transferred to the active browser session. Do not tear
@@ -469,6 +480,7 @@ export default function ArchitecturePage() {
 
       {apiBased && <label className="consent"><input required type="checkbox" checked={cloudConsent} onChange={(event) => setCloudConsent(event.target.checked)} /><span>I have permission to send this footage to the selected cloud providers and understand that the free tier may have provider data-use and quota limits.</span></label>}
       {error && <p className="error panel" role="alert">{error}</p>}
+      {apiBased && <CloudPreflightDiagnostics preflight={runtimePreflight} checkedAt={runtimePreflightCheckedAt} />}
       {activationMessage && <p className="architecture-message" role="status">{activationMessage}</p>}
       <div className="architecture-actions"><button className="button" disabled={activating}>{activating ? "Checking architecture…" : apiBased ? "Activate API-based architecture" : "Use self-hosted architecture"}</button><Link href="/processing" className="secondary button">Index a video</Link></div>
     </form>

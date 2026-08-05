@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from time import perf_counter
 from types import MappingProxyType
 from typing import Any, Sequence
 from urllib.parse import urlparse
@@ -575,6 +576,17 @@ def qdrant_preflight(
 
     profile = setup.profile
     expected_schema = profile.vector_schema
+    timeout_seconds = float(setup.configuration.get("qdrant_timeout_seconds", 10.0))
+    diagnostics: list[dict[str, Any]] = [
+        {
+            "stage": "profile_contract",
+            "status": "passed",
+            "message": (
+                f"Using profile {profile.id} with compatible collection "
+                f"{profile.collection_name}."
+            ),
+        }
+    ]
     result: dict[str, Any] = {
         "profile_id": profile.id,
         "collection_name": profile.collection_name,
@@ -585,6 +597,8 @@ def qdrant_preflight(
         "schema_errors": [],
         "points_count": 0,
         "warning": None,
+        "timeout_seconds": timeout_seconds,
+        "diagnostics": diagnostics,
     }
     if profile.qdrant_target != "cloud":
         result.update(
@@ -594,9 +608,17 @@ def qdrant_preflight(
                 "warning": "This self-hosted profile uses the local Qdrant setting; no cloud preflight was run.",
             }
         )
+        diagnostics.append(
+            {
+                "stage": "qdrant_cloud_connection",
+                "status": "skipped",
+                "message": "Cloud connectivity is not required for the self-hosted profile.",
+            }
+        )
         return result
 
     secrets = tuple(setup.credentials.values())
+    started_at = perf_counter()
     try:
         if client_factory is None:
             from qdrant_client import QdrantClient
@@ -605,16 +627,33 @@ def qdrant_preflight(
         client = client_factory(
             url=str(setup.configuration["qdrant_url"]),
             api_key=setup.credentials["qdrant_api_key"],
-            timeout=float(setup.configuration["qdrant_timeout_seconds"]),
+            timeout=timeout_seconds,
         )
         exists = bool(client.collection_exists(profile.collection_name))
+        elapsed_ms = round((perf_counter() - started_at) * 1000)
         result["reachable"] = True
         result["collection_exists"] = exists
+        diagnostics.append(
+            {
+                "stage": "qdrant_cloud_connection",
+                "status": "passed",
+                "message": "Qdrant Cloud accepted the authenticated collection lookup.",
+                "elapsed_ms": elapsed_ms,
+            }
+        )
         if not exists:
             result.update(
                 {
                     "schema_valid": True,
                     "warning": "Qdrant Cloud is reachable. The profile collection will be created by the first index run.",
+                }
+            )
+            diagnostics.append(
+                {
+                    "stage": "collection_schema",
+                    "status": "warning",
+                    "message": "The compatible collection does not exist yet; the first index run will create it.",
+                    "next_action": "Start indexing when you are ready. No manual collection setup is needed.",
                 }
             )
             return result
@@ -634,11 +673,53 @@ def qdrant_preflight(
                 "The existing collection is incompatible with this runtime profile. "
                 "Choose the profile collection shown above; do not mix vector schemas."
             )
+            diagnostics.append(
+                {
+                    "stage": "collection_schema",
+                    "status": "failed",
+                    "message": "The existing collection does not match this embedding profile.",
+                    "next_action": "Use the profile collection shown above or reindex into a compatible collection.",
+                }
+            )
+        else:
+            diagnostics.append(
+                {
+                    "stage": "collection_schema",
+                    "status": "passed",
+                    "message": "The existing collection matches the selected embedding profile.",
+                }
+            )
         return result
     except Exception as exc:  # noqa: BLE001 - UI needs a non-secret diagnostic
+        safe_error = str(redact_secrets(str(exc), secrets))
         result["error_type"] = type(exc).__name__
-        result["error"] = str(redact_secrets(str(exc), secrets))
+        result["error"] = safe_error
+        diagnostics.append(
+            {
+                "stage": "qdrant_cloud_connection",
+                "status": "failed",
+                "message": safe_error or "Qdrant Cloud did not complete the collection lookup.",
+                "elapsed_ms": round((perf_counter() - started_at) * 1000),
+                "next_action": _qdrant_preflight_next_action(exc, timeout_seconds),
+            }
+        )
         return result
+
+
+def _qdrant_preflight_next_action(exc: Exception, timeout_seconds: float) -> str:
+    """Return a safe, actionable next step for a Cloud preflight failure."""
+
+    description = str(exc).lower()
+    if isinstance(exc, TimeoutError) or "timed out" in description or "timeout" in description:
+        return (
+            f"The lookup did not finish within {timeout_seconds:g} seconds. Check the Cloud endpoint, "
+            "college network/Wi-Fi/proxy/firewall access, then retry."
+        )
+    if any(token in description for token in ("401", "403", "unauthorized", "forbidden", "api key", "authentication")):
+        return "Check that the Qdrant Cloud API key is current and belongs to this cluster, then retry."
+    if any(token in description for token in ("dns", "getaddrinfo", "name resolution", "connection refused", "network")):
+        return "Check the exact Cloud endpoint and network access, then retry from a network that permits HTTPS to Qdrant Cloud."
+    return "Check the Qdrant Cloud endpoint, API key, and network access, then retry."
 
 
 def qdrant_schema_errors(
