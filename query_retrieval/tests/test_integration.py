@@ -80,7 +80,10 @@ def test_near_identical_pair_ranks_top_and_hard_negative_ranks_last():
 # --- 2. failure path tests ---
 
 
-def test_qdrant_unreachable_returns_clean_response_not_500(api_client, monkeypatch):
+def test_qdrant_unreachable_returns_clean_503_not_silent_empty_or_500(api_client, monkeypatch):
+    """A real connection failure must be a loud, honest 503 - never a 500
+    crash, and never a silent 200/[] that looks identical to "no matches"
+    or a mock/fake substitute. See qdrant_client.QdrantSearchError."""
     broken_client = RealQdrantClient(host="localhost", port=1, timeout=2)
     monkeypatch.setattr(qdrant_client_module, "_client", broken_client)
     dims = {m: config.VECTOR_CONFIG[m]["dim"] for m in config.VECTOR_NAMES}
@@ -88,8 +91,28 @@ def test_qdrant_unreachable_returns_clean_response_not_500(api_client, monkeypat
 
     resp = api_client.post("/search", json={"query": "person in a red jacket", "top_k": 5})
 
-    assert resp.status_code == 200
-    assert resp.json()["results"] == []
+    assert resp.status_code == 503
+    body = resp.json()
+    assert "detail" in body
+    assert "unreachable" in body["detail"].lower() or "unavailable" in body["detail"].lower()
+    # Never a mock/fake substitute payload.
+    assert "results" not in body
+
+
+def test_all_encoders_failing_returns_clean_503_not_silent_empty(api_client, monkeypatch):
+    """If every modality encoder fails, encode_query() returns {} - the
+    request must surface that as a clear 503, not silently proceed to
+    search nothing and return an empty result set indistinguishable from
+    a real zero-match query."""
+    monkeypatch.setattr(api, "encoders", type("E", (), {"encode_query": staticmethod(lambda q: {})})())
+
+    resp = api_client.post("/search", json={"query": "person in a red jacket", "top_k": 5})
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert "detail" in body
+    assert "encoder" in body["detail"].lower()
+    assert "results" not in body
 
 
 def test_empty_query_string_does_not_crash(api_client, monkeypatch):
@@ -138,6 +161,49 @@ def test_zero_matches_returns_empty_results_cleanly(api_client, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["results"] == []
+
+
+# --- 2b. concurrency correctness ---
+
+
+def test_concurrent_modality_search_does_not_mix_up_modality_results(api_client, monkeypatch):
+    """The 4 Qdrant searches now run in a thread pool (concurrency change) -
+    assert each modality's result in the final response still traces back
+    to that modality's own search function, not a different thread's
+    result swapped in under the wrong key."""
+
+    def _make_fn(modality):
+        # Distinct video_id per modality so merge_windows() (which merges
+        # same-video overlapping windows by design) doesn't collapse these
+        # 4 independent hits into one region and defeat the assertion.
+        def _fn(vector, top_k):
+            return [{
+                "window_id": f"{modality}_only_hit",
+                "score": 1.0,
+                "payload": {
+                    "video_id": f"v_{modality}", "window_id": f"{modality}_only_hit",
+                    "start": 0.0, "end": 1.0,
+                },
+            }]
+        return _fn
+
+    monkeypatch.setattr(api, "_SEARCH_FNS", {m: _make_fn(m) for m in ["visual", "audio", "speech", "caption"]})
+    dims = {m: config.VECTOR_CONFIG[m]["dim"] for m in config.VECTOR_NAMES}
+    monkeypatch.setattr(api, "encoders", type("E", (), {"encode_query": staticmethod(_fake_encode_query(dims))})())
+
+    resp = api_client.post("/search", json={"query": "test", "top_k": 10})
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+
+    window_ids = {r["window_id"] for r in results}
+    assert window_ids == {"visual_only_hit", "audio_only_hit", "speech_only_hit", "caption_only_hit"}
+
+    for r in results:
+        expected_modality = r["window_id"].removesuffix("_only_hit")
+        assert r["matched_modalities"] == [expected_modality]
+        assert len(r["modality_evidence"]) == 1
+        assert r["modality_evidence"][0]["modality"] == expected_modality
+        assert r["state"] == "retrieved"
 
 
 # --- 3. /health readiness gating ---

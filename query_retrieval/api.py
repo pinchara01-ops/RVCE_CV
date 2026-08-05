@@ -2,8 +2,9 @@
 real query encoders, unweighted RRF fusion, and window merging.
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
@@ -13,6 +14,7 @@ from query_retrieval.fusion import rrf_fuse
 from query_retrieval.merge_windows import merge_windows
 from query_retrieval.models import SearchRequest, SearchResponse, SearchResultItem
 from query_retrieval.qdrant_client import (
+    QdrantSearchError,
     search_audio,
     search_caption,
     search_speech,
@@ -41,6 +43,11 @@ _SEARCH_FNS = {
     "speech": search_speech,
     "caption": search_caption,
 }
+
+# Reused across requests (not a per-call `with ThreadPoolExecutor()`) to
+# avoid paying thread-spawn cost on every query. 4 workers = one per
+# modality, matching the 4 concurrent Qdrant searches issued per request.
+_search_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="qdrant-search")
 
 # Explicit readiness flag rather than relying on ASGI startup-blocking
 # semantics: /health must not report ready until encoder warmup has
@@ -71,14 +78,35 @@ def search(request: SearchRequest) -> SearchResponse:
     candidate pool) - fusion is left untruncated so merging sees every
     candidate before anything is dropped; request.top_k is applied last,
     to the final merged regions.
+
+    Encoding (encoders.encode_query) and search (the 4 calls below) each
+    run their own modality-calls concurrently rather than sequentially -
+    see encoders.py and the thread pool above. A genuine failure (every
+    encoder failed, or Qdrant is unreachable) raises HTTPException(503)
+    with a descriptive error rather than silently returning an empty
+    result set that would be indistinguishable from "no matches".
     """
     query_vectors = encoders.encode_query(request.query)
+    if not query_vectors:
+        raise HTTPException(
+            status_code=503,
+            detail="All query encoders failed; search is unavailable.",
+        )
 
-    modality_hits = {
-        modality: fn(query_vectors[modality], top_k=config.DEFAULT_TOP_K)
+    futures = {
+        _search_executor.submit(fn, query_vectors[modality], config.DEFAULT_TOP_K): modality
         for modality, fn in _SEARCH_FNS.items()
         if modality in query_vectors
     }
+    modality_hits: dict[str, list[dict]] = {}
+    try:
+        for future, modality in futures.items():
+            modality_hits[modality] = future.result()
+    except QdrantSearchError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Qdrant is unreachable; search is unavailable: {exc}",
+        ) from exc
 
     fused = rrf_fuse(modality_hits)
     regions = merge_windows(fused)[: request.top_k]
@@ -93,6 +121,8 @@ def search(request: SearchRequest) -> SearchResponse:
             caption=region.payload.caption,
             score=region.fused_score,
             matched_modalities=region.matched_modalities,
+            modality_evidence=region.modality_evidence,
+            state="retrieved",
         )
         for region in regions
     ]
