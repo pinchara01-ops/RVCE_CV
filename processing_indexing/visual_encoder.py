@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Protocol
+
+from .model_cache import model_load_kwargs
 from .models import VideoWindow
 
 
@@ -27,9 +29,14 @@ class XClipVisualEncoder:
         if self._model is None:
             from transformers import XCLIPModel, XCLIPProcessor
 
-            self._processor = XCLIPProcessor.from_pretrained(self.model_name)
+            load_kwargs = model_load_kwargs(self.model_name)
+            self._processor = XCLIPProcessor.from_pretrained(
+                self.model_name, **load_kwargs
+            )
             self._model = (
-                XCLIPModel.from_pretrained(self.model_name).to(self.device).eval()
+                XCLIPModel.from_pretrained(self.model_name, **load_kwargs)
+                .to(self.device)
+                .eval()
             )
         cap = cv2.VideoCapture(str(video_path))
         frames = []
