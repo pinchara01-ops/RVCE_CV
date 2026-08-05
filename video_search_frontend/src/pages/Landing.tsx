@@ -7,6 +7,7 @@ import { StageProgress } from '../components/StageProgress'
 import { ResultsTab } from '../components/ResultsTab'
 import { PipelineTab } from '../components/PipelineTab'
 import { TopResultCard } from '../components/TopResultCard'
+import { ParticleField } from '../components/ParticleField'
 import { runSearch, SearchApiError, type SearchResultItem } from '../lib/api'
 import {
   buildCompletedStages,
@@ -128,7 +129,9 @@ export function Landing() {
       <section className="relative h-screen w-full overflow-hidden bg-black">
         <BackgroundVideo />
         {/* Minimal legibility gradient — the video itself carries the art direction. */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-black/10 to-black/60" />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-black/10 to-transparent" />
+        {/* Dedicated fade into the section below, so the video doesn't end on a hard edge. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-gradient-to-b from-transparent to-black" />
 
         <div className="relative z-10 flex h-full flex-col">
           <Nav />
@@ -193,40 +196,47 @@ export function Landing() {
         </div>
       </section>
 
-      <section
-        id="pipeline-section"
-        className="mx-auto w-full max-w-3xl scroll-mt-10 px-6 py-16"
-      >
-        <div className="liquid-glass overflow-hidden rounded-2xl">
-          <div className="flex border-b border-ink-700">
-            {(['results', 'pipeline'] as Tab[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`flex-1 py-3 text-sm font-medium capitalize transition-colors ${
-                  tab === t
-                    ? 'border-b-2 border-glow text-paper-100'
-                    : 'text-paper-300/40 hover:text-paper-300/70'
-                }`}
-              >
-                {t === 'results' ? 'Results' : 'Pipeline'}
-              </button>
-            ))}
-          </div>
+      <div className="relative bg-black">
+        <ParticleField />
 
-          <div className="h-[26rem]">
-            {tab === 'results' ? (
-              <ResultsTab turns={turns} />
-            ) : (
-              <PipelineTab
-                stages={latestStages}
-                modalities={latestModalities}
-                hasMockedTiming={latestMocked}
-              />
-            )}
+        <section
+          id="pipeline-section"
+          className="relative z-10 mx-auto w-full max-w-3xl scroll-mt-10 px-6 py-16"
+        >
+          <div
+            className="liquid-glass overflow-hidden rounded-2xl"
+            style={{ backgroundColor: 'rgba(20,19,15,0.97)' }}
+          >
+            <div className="flex border-b border-ink-700">
+              {(['results', 'pipeline'] as Tab[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`flex-1 py-3 text-sm font-medium capitalize transition-colors ${
+                    tab === t
+                      ? 'border-b-2 border-glow text-paper-100'
+                      : 'text-paper-300/40 hover:text-paper-300/70'
+                  }`}
+                >
+                  {t === 'results' ? 'Results' : 'Pipeline'}
+                </button>
+              ))}
+            </div>
+
+            <div className="h-[26rem]">
+              {tab === 'results' ? (
+                <ResultsTab turns={turns} />
+              ) : (
+                <PipelineTab
+                  stages={latestStages}
+                  modalities={latestModalities}
+                  hasMockedTiming={latestMocked}
+                />
+              )}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
   )
 }
