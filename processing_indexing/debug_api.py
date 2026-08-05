@@ -1,19 +1,50 @@
 from __future__ import annotations
+
 import json
 import logging
+import math
 import mimetypes
 import re
+from dataclasses import replace
+
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from .debug_jobs import JobManager, sanitize
-from .preflight import model_statuses
-from .config import Settings
-from .library import collection_health, get_window, list_videos, list_windows, media_path_for_window
-from .probe import VideoProbeError
+
 from query_retrieval import api as query_api
-from query_retrieval.models import SearchRequest, SearchResponse, VerifyRequest, VerifyResponse
+from query_retrieval.models import (
+    SearchRequest,
+    SearchResponse,
+    VerifyRequest,
+    VerifyResponse,
+)
+
+from .config import Settings
+from .debug_jobs import JobManager, sanitize
+from .library import (
+    collection_health,
+    get_window,
+    list_videos,
+    list_windows,
+    media_path_for_window,
+)
+from .preflight import model_statuses
+from .probe import VideoProbeError
+from .runtime_profiles import (
+    RuntimeProfileError,
+    get_profile,
+    list_profiles_public,
+    qdrant_preflight,
+    redact_secrets,
+    redact_validation_errors,
+)
+from .runtime_sessions import (
+    RuntimeSessionNotFoundError,
+    RuntimeSessionStore,
+    parse_session_payload,
+)
 
 app = FastAPI(title="Processing Debug API")
 logger = logging.getLogger(__name__)
@@ -36,7 +67,126 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-manager = JobManager()
+# Ephemeral by design: credentials live only in this process and are cleared on
+# backend restart.  Worker integration reads private config by opaque id; HTTP
+# responses always call RuntimeSession.public().
+runtime_sessions = RuntimeSessionStore()
+manager = JobManager(runtime_config_resolver=runtime_sessions.get_runtime_config)
+query_api.set_runtime_session_resolver(runtime_sessions.get_runtime_config)
+
+
+# An API-based indexing job deliberately owns only per-upload tuning.  Cloud
+# endpoint, collection, provider/model contract, and credentials live in the
+# opaque runtime session and are applied immediately before execution.  This
+# allowlist keeps callers from smuggling a secret-shaped value into the public
+# job configuration or overriding the session's immutable embedding contract.
+_API_JOB_CONFIG_FIELDS = frozenset(
+    {
+        "profile_id",
+        "runtime_session_id",
+        "window_seconds",
+        "stride_seconds",
+        "max_windows",
+        "index_qdrant",
+    }
+)
+
+
+def _api_job_config_error() -> ValueError:
+    """Return a generic rejection that never reflects submitted config data."""
+
+    return ValueError(
+        "API-based indexing accepts only the active runtime session and "
+        "per-upload window/index settings. Configure cloud endpoints, "
+        "providers, models, and credentials in the active runtime session."
+    )
+
+
+def _positive_api_job_number(value, field: str) -> float:
+    """Validate an API job tuning value without echoing its submitted value."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(  # noqa: TRY004 - API input errors share one public 400 contract
+            f"API-based {field} must be a positive number"
+        )
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError(f"API-based {field} must be a positive number")
+    return number
+
+
+def _normalize_api_job_configuration(config: dict, session) -> dict:
+    """Return the only public, non-secret configuration valid for an API job.
+
+    The session object is trusted backend state.  All fields it owns are
+    intentionally excluded here so public job history can never contain a
+    Qdrant endpoint/key, provider choice, model identifier, or profile schema.
+    """
+
+    if set(config) - _API_JOB_CONFIG_FIELDS:
+        raise _api_job_config_error()
+    profile_id = config.get("profile_id")
+    if not isinstance(profile_id, str) or profile_id != session.profile.id:
+        raise ValueError("Runtime session profile does not match the indexing job")
+    session_id = config.get("runtime_session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ValueError("API-based indexing requires an active runtime session")
+
+    normalized = {
+        "profile_id": session.profile.id,
+        "runtime_session_id": session_id,
+    }
+    if "window_seconds" in config:
+        normalized["window_seconds"] = _positive_api_job_number(
+            config["window_seconds"], "window_seconds"
+        )
+    if "stride_seconds" in config:
+        normalized["stride_seconds"] = _positive_api_job_number(
+            config["stride_seconds"], "stride_seconds"
+        )
+    effective_window = normalized.get(
+        "window_seconds", float(session.configuration["window_seconds"])
+    )
+    effective_stride = normalized.get(
+        "stride_seconds", float(session.configuration["stride_seconds"])
+    )
+    if effective_stride > effective_window:
+        raise ValueError("API-based stride_seconds must not exceed window_seconds")
+    if "max_windows" in config:
+        value = config["max_windows"]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or int(value) != value
+            or value < 0
+        ):
+            raise ValueError("API-based max_windows must be a whole number greater than or equal to zero")
+        normalized["max_windows"] = int(value)
+    if "index_qdrant" in config:
+        if not isinstance(config["index_qdrant"], bool):
+            raise ValueError("API-based index_qdrant must be true or false")
+        normalized["index_qdrant"] = config["index_qdrant"]
+    return normalized
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_request_validation_error(
+    _request: Request, exc: RequestValidationError
+):
+    """Prevent FastAPI's default 422 body from reflecting API keys.
+
+    ``Field(exclude=True)`` protects successful response serialisation, but
+    not Pydantic's default validation diagnostics.  Query and verification
+    requests can still be malformed before their route handler runs, so make
+    the app-level 422 response follow the same redaction rule as runtime
+    session endpoints.
+    """
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": redact_validation_errors(exc.errors())},
+    )
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -107,14 +257,136 @@ def preflight():
     }
 
 
+# --- Runtime profile and credential-session API ----------------------------
+#
+# API clients post keys once to create a session, then only pass the opaque
+# session id to later calls.  The endpoint intentionally reads raw JSON rather
+# than a Pydantic request model: FastAPI's default validation error can echo an
+# invalid input value, which is unacceptable for credential-bearing requests.
+
+
+async def _runtime_json(request: Request) -> dict:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "Runtime session body must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Runtime session body must be a JSON object")
+    return payload
+
+
+def _runtime_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, RuntimeSessionNotFoundError):
+        return HTTPException(404, "Runtime session was not found")
+    if isinstance(exc, RuntimeProfileError):
+        # Runtime-profile validation errors name fields but never echo a key.
+        return HTTPException(400, str(exc))
+    # Do not log the exception text or traceback here: a third-party client or
+    # malformed request can embed a credential in either one.
+    logger.error("Unexpected runtime-session failure (%s)", type(exc).__name__)
+    return HTTPException(500, "Runtime session request could not be completed")
+
+
+@app.get("/api/runtime/profiles")
+def runtime_profiles():
+    """List browser-safe profile contracts and selectable provider options."""
+
+    return {"profiles": list_profiles_public()}
+
+
+@app.post("/api/runtime/session", status_code=201)
+async def create_runtime_session(request: Request):
+    """Create an opaque, in-memory credential session for one profile."""
+
+    try:
+        profile_id, configuration, credentials = parse_session_payload(
+            await _runtime_json(request)
+        )
+        return runtime_sessions.create(
+            profile_id, configuration, credentials
+        ).public()
+    except Exception as exc:
+        raise _runtime_http_error(exc) from exc
+
+
+@app.get("/api/runtime/session/{session_id}")
+def get_runtime_session(session_id: str):
+    try:
+        return runtime_sessions.get(session_id).public()
+    except Exception as exc:
+        raise _runtime_http_error(exc) from exc
+
+
+@app.put("/api/runtime/session/{session_id}")
+async def update_runtime_session(session_id: str, request: Request):
+    """Update setup values without returning, logging, or persisting keys."""
+
+    try:
+        payload = await _runtime_json(request)
+        # Profile changes intentionally create a fresh session so an existing
+        # worker cannot cross an embedding schema boundary midway through a run.
+        if "profile_id" in payload:
+            current = runtime_sessions.get(session_id)
+            if payload["profile_id"] != current.profile.id:
+                raise RuntimeProfileError(
+                    "Changing runtime profile requires creating a new runtime session"
+                )
+            payload = dict(payload)
+            del payload["profile_id"]
+        profile_id, configuration, credentials = parse_session_payload(
+            {"profile_id": runtime_sessions.get(session_id).profile.id, **payload}
+        )
+        # ``profile_id`` is checked above and retained only to use the same
+        # strict payload parser as creation.
+        del profile_id
+        return runtime_sessions.update(
+            session_id,
+            configuration=configuration,
+            credentials=credentials,
+        ).public()
+    except Exception as exc:
+        raise _runtime_http_error(exc) from exc
+
+
+@app.delete("/api/runtime/session/{session_id}", status_code=204)
+def delete_runtime_session(session_id: str):
+    try:
+        runtime_sessions.close(session_id)
+        return Response(status_code=204)
+    except Exception as exc:
+        raise _runtime_http_error(exc) from exc
+
+
+@app.post("/api/runtime/session/{session_id}/preflight")
+def preflight_runtime_session(session_id: str):
+    """Run the read-only Qdrant Cloud connectivity/schema preflight."""
+
+    try:
+        session = runtime_sessions.get(session_id)
+        return qdrant_preflight(session.validated_setup())
+    except Exception as exc:
+        raise _runtime_http_error(exc) from exc
+
+
 @app.post("/api/processing/jobs", status_code=201)
 async def create_job(video: UploadFile = File(...), configuration: str = Form("{}")):
     try:
         config = json.loads(configuration)
+        if not isinstance(config, dict):
+            raise ValueError("Job configuration must be a JSON object")
+        if config.get("profile_id") == "api-gemini-free-v1":
+            session_id = config.get("runtime_session_id")
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise ValueError("API-based indexing requires an active runtime session")
+            # Fail before storing the upload if the opaque session expired.
+            session = runtime_sessions.get(session_id)
+            if session.profile.id != config.get("profile_id"):
+                raise ValueError("Runtime session profile does not match the indexing job")
+            config = _normalize_api_job_configuration(config, session)
         data = await video.read()
         job = manager.create(video.filename or "", data, config)
         return job.public()
-    except (ValueError, VideoProbeError, json.JSONDecodeError) as exc:
+    except (ValueError, VideoProbeError, RuntimeSessionNotFoundError, json.JSONDecodeError) as exc:
         raise HTTPException(400, str(exc))
 
 
@@ -230,48 +502,132 @@ def export(job_id: str, export_type: str):
 # --- Persistent indexed-library read model ---------------------------------
 
 
+def _library_runtime(
+    *, runtime_session_id: str | None = None, profile_id: str | None = None
+) -> tuple[Settings, dict[str, int], tuple[str, ...]]:
+    """Resolve a library/query view without ever returning cloud credentials."""
+
+    resolved_profile_id = profile_id or "self-hosted-v1"
+    profile = get_profile(resolved_profile_id)
+    expected = {vector.name: vector.dimensions for vector in profile.vectors}
+    if profile.qdrant_target == "local":
+        base = Settings.from_env()
+        return replace(base, collection_name=profile.collection_name), expected, ()
+    if not runtime_session_id:
+        raise HTTPException(400, "This API-based library requires the active runtime session")
+    runtime = runtime_sessions.get_runtime_config(runtime_session_id)
+    if runtime.get("runtime_profile_id") != profile.id:
+        raise HTTPException(400, "Runtime session profile does not match the selected library")
+    settings = replace(
+        Settings.from_env(),
+        qdrant_url=str(runtime["qdrant_url"]),
+        qdrant_api_key=str(runtime["qdrant_api_key"]),
+        qdrant_timeout_seconds=float(runtime.get("qdrant_timeout_seconds", 10)),
+        collection_name=profile.collection_name,
+    )
+    return settings, expected, tuple(
+        value for key, value in runtime.items() if "key" in key.lower() and isinstance(value, str)
+    )
+
+
+def _redact_library_health(health: dict, secrets: tuple[str, ...]) -> dict:
+    return redact_secrets(health, secrets)
+
+
 @app.get("/api/index/health")
-def index_health():
-    return collection_health()
+def index_health(
+    runtime_session_id: str | None = None, profile_id: str | None = None
+):
+    try:
+        settings, expected, secrets = _library_runtime(
+            runtime_session_id=runtime_session_id, profile_id=profile_id
+        )
+        return _redact_library_health(
+            collection_health(settings, expected_vector_dims=expected), secrets
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - return a safe connection diagnosis
+        raise HTTPException(503, "Could not read the selected Qdrant collection") from exc
 
 
 @app.get("/api/index/videos")
-def indexed_videos(limit: int = 500):
+def indexed_videos(
+    limit: int = 500,
+    runtime_session_id: str | None = None,
+    profile_id: str | None = None,
+):
     try:
-        return {"videos": list_videos(limit=limit)}
+        settings, _expected, _secrets = _library_runtime(
+            runtime_session_id=runtime_session_id, profile_id=profile_id
+        )
+        return {"videos": list_videos(settings=settings, limit=limit)}
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, f"Could not read indexed videos: {exc}") from exc
+        raise HTTPException(503, "Could not read indexed videos") from exc
 
 
 @app.get("/api/index/windows")
-def indexed_windows(video_id: str | None = None, limit: int = 100, vectors: bool = False):
+def indexed_windows(
+    video_id: str | None = None,
+    limit: int = 100,
+    vectors: bool = False,
+    runtime_session_id: str | None = None,
+    profile_id: str | None = None,
+):
     try:
+        settings, _expected, _secrets = _library_runtime(
+            runtime_session_id=runtime_session_id, profile_id=profile_id
+        )
         return {
             "windows": list_windows(
-                video_id=video_id, limit=limit, include_vectors=vectors
+                settings=settings, video_id=video_id, limit=limit, include_vectors=vectors
             )
         }
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, f"Could not read indexed windows: {exc}") from exc
+        raise HTTPException(503, "Could not read indexed windows") from exc
 
 
 @app.get("/api/index/windows/{window_id}")
-def indexed_window(window_id: str, vectors: bool = True):
+def indexed_window(
+    window_id: str,
+    vectors: bool = True,
+    runtime_session_id: str | None = None,
+    profile_id: str | None = None,
+):
     try:
-        record = get_window(window_id, include_vectors=vectors)
+        settings, _expected, _secrets = _library_runtime(
+            runtime_session_id=runtime_session_id, profile_id=profile_id
+        )
+        record = get_window(window_id, settings=settings, include_vectors=vectors)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, f"Could not read indexed window: {exc}") from exc
+        raise HTTPException(503, "Could not read indexed window") from exc
     if record is None:
         raise HTTPException(404, "Indexed window not found")
     return record
 
 
 @app.get("/api/index/media/{window_id}")
-def indexed_media(window_id: str, request: Request):
+def indexed_media(
+    window_id: str,
+    request: Request,
+    runtime_session_id: str | None = None,
+    profile_id: str | None = None,
+):
     try:
-        path = media_path_for_window(window_id)
+        settings, _expected, _secrets = _library_runtime(
+            runtime_session_id=runtime_session_id, profile_id=profile_id
+        )
+        path = media_path_for_window(window_id, settings=settings)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, f"Could not resolve indexed media: {exc}") from exc
+        raise HTTPException(503, "Could not resolve indexed media") from exc
     if path is None:
         raise HTTPException(404, "Indexed media is unavailable")
     return media_response(path, request)

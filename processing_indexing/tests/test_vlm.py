@@ -21,6 +21,19 @@ def test_malformed_json_is_reported():
         provider.describe(None, WINDOW)
 
 
+def test_local_style_fenced_json_is_parsed_without_accepting_prose():
+    provider = RetryingVLMProvider(
+        lambda *args: '```json\n{"scene_context":"car park","confidence":0.8}\n```',
+        timeout=1,
+        retries=0,
+    )
+
+    result = provider.describe(None, WINDOW)
+
+    assert result.scene_context == "car park"
+    assert result.confidence == 0.8
+
+
 def test_timeout_is_reported_without_silent_success():
     def slow(*args):
         time.sleep(0.1)

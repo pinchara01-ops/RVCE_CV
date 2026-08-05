@@ -1,21 +1,64 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { IndexHealth, IndexedVideo, jsonFetch } from "@/lib/api";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { IndexHealth, IndexedVideo, RuntimeSession, jsonFetch, loadRuntimeSessionId } from "@/lib/api";
 
 export default function LibraryPage() {
+  return <Suspense fallback={<main className="page-loading">Loading library…</main>}><LibraryContent /></Suspense>;
+}
+
+function LibraryContent() {
+  const searchParams = useSearchParams();
+  const runtimeSessionId = searchParams.get("runtime_session_id") || loadRuntimeSessionId();
+  const requestedProfileId = searchParams.get("profile_id");
+  const [runtimeSession, setRuntimeSession] = useState<RuntimeSession>();
+  const [runtimeSessionState, setRuntimeSessionState] = useState<"not_required" | "pending" | "ready" | "missing">(
+    () => runtimeSessionId ? "pending" : "not_required",
+  );
+  const profileId = runtimeSession?.profile.id || (runtimeSessionId ? undefined : requestedProfileId || "self-hosted-v1");
+  const profileQuery = profileId === "api-gemini-free-v1" && runtimeSessionId && runtimeSession?.profile.id === profileId
+    ? `?${new URLSearchParams({ profile_id: profileId, runtime_session_id: runtimeSessionId }).toString()}`
+    : "";
   const [health, setHealth] = useState<IndexHealth>();
   const [videos, setVideos] = useState<IndexedVideo[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!runtimeSessionId) return;
+    let cancelled = false;
+    const start = window.setTimeout(() => {
+      setRuntimeSessionState("pending");
+      setRuntimeSession(undefined);
+      jsonFetch<RuntimeSession>(`/api/runtime/session/${encodeURIComponent(runtimeSessionId)}`)
+        .then((session) => {
+          if (cancelled) return;
+          setRuntimeSession(session);
+          setRuntimeSessionState("ready");
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setRuntimeSessionState("missing");
+        });
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(start); };
+  }, [runtimeSessionId]);
   const load = useCallback(async () => {
+    if (runtimeSessionState === "pending") return;
     setLoading(true);
     setError("");
+    if (runtimeSessionState === "missing" || (requestedProfileId === "api-gemini-free-v1" && !runtimeSession)) {
+      setVideos([]);
+      setHealth(undefined);
+      setError("The API-based architecture session has expired or is unavailable. Return to Architecture to enter the cloud credentials again.");
+      setLoading(false);
+      return;
+    }
     try {
       const [nextHealth, data] = await Promise.all([
-        jsonFetch<IndexHealth>("/api/index/health"),
-        jsonFetch<{ videos: IndexedVideo[] }>("/api/index/videos"),
+        jsonFetch<IndexHealth>(`/api/index/health${profileQuery}`),
+        jsonFetch<{ videos: IndexedVideo[] }>(`/api/index/videos${profileQuery}`),
       ]);
       setHealth(nextHealth);
       setVideos(data.videos);
@@ -24,11 +67,12 @@ export default function LibraryPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [profileQuery, requestedProfileId, runtimeSession, runtimeSessionState]);
   useEffect(() => {
+    if (runtimeSessionState === "pending") return;
     const timer = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timer);
-  }, [load]);
+  }, [load, runtimeSessionState]);
 
   return <main>
     <div className="page-heading">
@@ -38,9 +82,9 @@ export default function LibraryPage() {
     {error && <p className="error panel">{error}</p>}
     <section className={`status-strip ${health?.reachable ? "ready" : "warning"}`}>
       <div><strong>{health?.collection_name ?? "video_windows"}</strong><span>{health?.reachable ? `${health.points_count} stored windows` : health?.error ?? "Qdrant is not reachable"}</span></div>
-      <Link href="/processing">Index another video</Link>
+      <Link href={`/processing${profileQuery}`}>Index another video</Link>
     </section>
-    {!loading && !videos.length && <section className="empty-state"><h2>Your library is empty</h2><p>Index a video with “Save real vectors into Qdrant” enabled. It will appear here after the job completes.</p><Link className="button" href="/processing">Create indexing job</Link></section>}
-    {!!videos.length && <section className="library-table scroll"><table><thead><tr><th>Video</th><th>Windows</th><th>Duration</th><th>Captions</th><th>Media</th><th /></tr></thead><tbody>{videos.map((video) => <tr key={video.video_id}><td><strong>{video.source_filename || video.video_id.slice(0, 12)}</strong><span className="code">{video.video_id}</span></td><td>{video.windows}</td><td>{video.start.toFixed(1)}s–{video.end.toFixed(1)}s</td><td>{video.direct_captions} direct, {video.caption_available} available</td><td><span className={video.media_available ? "ok" : "muted"}>{video.media_available ? "playable" : "not available"}</span></td><td><Link className="text-link" href={`/library/${encodeURIComponent(video.video_id)}`}>Inspect windows →</Link></td></tr>)}</tbody></table></section>}
+    {!loading && !videos.length && <section className="empty-state"><h2>Your library is empty</h2><p>Index a video with “Save real vectors into Qdrant” enabled. It will appear here after the job completes.</p><Link className="button" href={`/processing${profileQuery}`}>Create indexing job</Link></section>}
+    {!!videos.length && <section className="library-table scroll"><table><thead><tr><th>Video</th><th>Profile</th><th>Windows</th><th>Duration</th><th>Captions</th><th>Media</th><th /></tr></thead><tbody>{videos.map((video) => <tr key={video.video_id}><td><strong>{video.source_filename || video.video_id.slice(0, 12)}</strong><span className="code">{video.video_id}</span></td><td><code>{video.embedding_profile ?? profileId}</code></td><td>{video.windows}</td><td>{video.start.toFixed(1)}s–{video.end.toFixed(1)}s</td><td>{video.direct_captions} direct, {video.caption_available} available</td><td><span className={video.media_available ? "ok" : "muted"}>{video.media_available ? "playable" : "not available"}</span></td><td><Link className="text-link" href={`/library/${encodeURIComponent(video.video_id)}${profileQuery}`}>Inspect windows →</Link></td></tr>)}</tbody></table></section>}
   </main>;
 }

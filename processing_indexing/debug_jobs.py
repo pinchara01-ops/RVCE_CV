@@ -7,6 +7,7 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +18,14 @@ from .preflight import model_statuses
 from .probe import probe_video, stable_video_id
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
-SECRET_KEYS = {"openai_api_key", "api_key", "qdrant_api_key", "authorization"}
+SECRET_KEYS = {
+    "openai_api_key",
+    "gemini_api_key",
+    "nvidia_api_key",
+    "api_key",
+    "qdrant_api_key",
+    "authorization",
+}
 MAX_ACTIVITY_ENTRIES = 400
 
 
@@ -158,7 +166,12 @@ class Job:
 
 
 class JobManager:
-    def __init__(self, root: Path | None = None):
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        runtime_config_resolver: Callable[[str], dict] | None = None,
+    ):
         self.root = (
             root or Path(os.getenv("PROCESSING_JOBS_DIR", "processing_jobs"))
         ).resolve()
@@ -166,6 +179,10 @@ class JobManager:
         self.jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._active: str | None = None
+        # API-profile credentials live in RuntimeSessionStore, never in an
+        # upload request or exported job configuration.  The resolver is
+        # injected to avoid a debug_api import cycle.
+        self._runtime_config_resolver = runtime_config_resolver
 
     def create(self, filename: str, data: bytes, config: dict) -> Job:
         name = safe_filename(filename)
@@ -328,12 +345,53 @@ class JobManager:
         )
         return job
 
+    def _hydrate_api_runtime(self, job: Job) -> None:
+        """Attach a private runtime session just before an API job executes.
+
+        The persisted/public job configuration contains only the opaque session
+        id.  Credentials are resolved from the in-memory session store at
+        execution time and are removed from the job object again in ``finally``.
+        """
+
+        profile_id = str(job.config.get("profile_id") or "")
+        if profile_id != "api-gemini-free-v1":
+            return
+        session_id = job.config.get("runtime_session_id")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("API-based indexing requires an active runtime session")
+        if self._runtime_config_resolver is None:
+            raise RuntimeError("API runtime sessions are not configured in this backend")
+        runtime = self._runtime_config_resolver(session_id)
+        if runtime.get("runtime_profile_id") != profile_id:
+            raise ValueError("Runtime session profile does not match this indexing job")
+        # The session config wins for cloud endpoint, provider choices, and
+        # collection contract.  User-tunable non-secret settings stay in the
+        # job-local mapping.
+        job.private_config = {**job.private_config, **runtime}
+        self._activity(
+            job,
+            "runtime",
+            "Resolved the API-based session in backend memory",
+            profile_id=profile_id,
+            collection=runtime.get("collection_name"),
+            providers=runtime.get("providers", {}),
+        )
+
+    @staticmethod
+    def _forget_runtime_credentials(job: Job) -> None:
+        """Drop transient key values from the in-memory Job after execution."""
+
+        for name in tuple(job.private_config):
+            if "key" in name.lower() or name.lower() == "authorization":
+                del job.private_config[name]
+
     def _run(self, job: Job):
         try:
             job.status = "running"
             job.started_at = time.time()
             job.stage = "configuration"
             self._event(job, "started")
+            self._hydrate_api_runtime(job)
             settings = self._settings(job)
             run_config = job.runtime_config()
             mode = run_config.get("vlm_mode", "selection_only")
@@ -350,17 +408,20 @@ class JobManager:
                 stride_seconds=settings.stride_seconds,
                 max_windows=settings.max_windows,
             )
-            if mode not in {"selection_only", "mock", "openai", "cosmos"}:
-                raise ValueError("Unsupported VLM mode")
-            if mode == "mock" and run_config.get("index_qdrant"):
-                collection = settings.collection_name
-                if not (
-                    collection.startswith("debug_") or collection.startswith("mock_")
-                ):
-                    raise ValueError(
-                        "Mock results require a debug_ or mock_ Qdrant collection"
-                    )
-            self._execute_pipeline(job, settings, mode)
+            if run_config.get("runtime_profile_id") == "api-gemini-free-v1":
+                self._execute_api_pipeline(job, settings)
+            else:
+                if mode not in {"selection_only", "mock", "openai", "cosmos", "local_qwen"}:
+                    raise ValueError("Unsupported VLM mode")
+                if mode == "mock" and run_config.get("index_qdrant"):
+                    collection = settings.collection_name
+                    if not (
+                        collection.startswith("debug_") or collection.startswith("mock_")
+                    ):
+                        raise ValueError(
+                            "Mock results require a debug_ or mock_ Qdrant collection"
+                        )
+                self._execute_pipeline(job, settings, mode)
             if job.cancel_requested:
                 job.status = "cancelled"
                 job.stage = "cancelled"
@@ -431,6 +492,7 @@ class JobManager:
             self._event(job, "failed", message=safe_error)
             self._write_artifacts(job)
         finally:
+            self._forget_runtime_credentials(job)
             with self._lock:
                 if self._active == job.id:
                     self._active = None
@@ -443,6 +505,11 @@ class JobManager:
             window_seconds=float(c.get("window_seconds", 10)),
             stride_seconds=float(c.get("stride_seconds", 5)),
             device=str(c.get("device", "cpu")),
+            qdrant_url=str(c.get("qdrant_url", base.qdrant_url)),
+            qdrant_api_key=c.get("qdrant_api_key", base.qdrant_api_key),
+            qdrant_timeout_seconds=float(
+                c.get("qdrant_timeout_seconds", base.qdrant_timeout_seconds)
+            ),
             collection_name=str(c.get("collection_name", base.collection_name)),
             vlm_visual_change_threshold=float(
                 c.get("visual_threshold", base.vlm_visual_change_threshold)
@@ -468,10 +535,248 @@ class JobManager:
             openai_vlm_max_frames=int(
                 c.get("openai_max_frames", base.openai_vlm_max_frames)
             ),
+            vlm_model=str(c.get("local_qwen_model", base.vlm_model)),
             max_windows=(
                 int(c["max_windows"]) if int(c.get("max_windows", 0)) > 0 else None
             ),
         )
+
+    def _execute_api_pipeline(self, job: Job, settings: Settings) -> None:
+        """Run the credential-private Gemini/Qdrant Cloud indexing profile.
+
+        This path is intentionally separate from ``_execute_pipeline``: it
+        must never instantiate Whisper, X-CLIP, CLAP, BGE, or local Qdrant.
+        The only stored job configuration is the opaque session id; API keys
+        are present only in ``job.private_config`` for this active call.
+        """
+
+        from .api_pipeline import (
+            ApiPipelineSettings,
+            GeminiApiPipelineFactoryConfig,
+            api_contract_from_runtime_profile,
+            build_gemini_api_pipeline,
+            make_profile_qdrant_sink,
+        )
+        from .runtime_profiles import get_profile
+
+        runtime = job.runtime_config()
+        profile = get_profile(str(runtime.get("runtime_profile_id")))
+        providers = dict(runtime.get("providers") or {})
+        unsupported = {
+            stage: provider
+            for stage, provider in providers.items()
+            if stage in {"transcription", "media_embedding", "text_embedding"}
+            and provider != "gemini"
+        }
+        if unsupported:
+            selections = ", ".join(
+                f"{stage}={provider}" for stage, provider in sorted(unsupported.items())
+            )
+            raise ValueError(
+                "This API indexing implementation currently executes the Gemini "
+                f"profile only; change these stages to Gemini: {selections}"
+            )
+        gemini_key = runtime.get("gemini_api_key")
+        if not isinstance(gemini_key, str) or not gemini_key.strip():
+            raise ValueError("The active API session does not contain a Gemini API key")
+
+        models = dict(runtime.get("models") or {})
+        embedding_model = str(models.get("media_embedding") or "gemini-embedding-2")
+        generation_model = str(models.get("transcription") or "gemini-3.5-flash-lite")
+        contract = api_contract_from_runtime_profile(profile)
+
+        def qdrant_progress(done: int, total: int) -> None:
+            job.stage = "qdrant_upsert"
+            job.current_window = done
+            job.total_windows = max(job.total_windows, total)
+            self._activity(
+                job,
+                "qdrant",
+                f"Qdrant Cloud confirmed {done}/{total} indexed windows",
+                current_window=done,
+                total_windows=total,
+                collection=contract.collection_name,
+            )
+
+        def pipeline_progress(event) -> None:
+            job.stage = event.stage
+            job.progress = max(job.progress, min(float(event.progress), 0.98))
+            job.current_window = int(event.current_window)
+            job.total_windows = int(event.total_windows)
+            self._activity(
+                job,
+                "api_pipeline",
+                event.message,
+                level="warning" if event.status in {"warning", "failed"} else "info",
+                stage=event.stage,
+                state=event.status,
+                overall_progress=round(job.progress, 3),
+                current_window=job.current_window,
+                total_windows=job.total_windows,
+                **dict(event.details),
+            )
+
+        sink = None
+        if runtime.get("index_qdrant"):
+            sink = make_profile_qdrant_sink(
+                qdrant_url=str(runtime.get("qdrant_url") or ""),
+                qdrant_api_key=str(runtime.get("qdrant_api_key") or ""),
+                profile=profile,
+                timeout_seconds=settings.qdrant_timeout_seconds,
+                batch_size=settings.batch_size,
+                on_progress=qdrant_progress,
+            )
+        self._model_state(
+            job,
+            "gemini_api",
+            "loading",
+            "Preparing hosted Gemini embedding, transcription, and caption services",
+            embedding_model=embedding_model,
+            generation_model=generation_model,
+        )
+        self._activity(
+            job,
+            "qdrant",
+            "Using the managed Qdrant Cloud profile collection",
+            collection=contract.collection_name,
+            persistent=bool(sink),
+        )
+        bundle = build_gemini_api_pipeline(
+            GeminiApiPipelineFactoryConfig(
+                gemini_api_key=gemini_key,
+                embedding_model=embedding_model,
+                embedding_dimensions=contract.dimensions,
+                generation_model=generation_model,
+                profile_id=contract.profile_id,
+                collection_name=contract.collection_name,
+            ),
+            record_sink=sink,
+            progress_callback=pipeline_progress,
+            settings=ApiPipelineSettings(
+                window_seconds=settings.window_seconds,
+                stride_seconds=settings.stride_seconds,
+                profile=contract,
+            ),
+        )
+        caption_provider = str(providers.get("caption") or "gemini")
+        if caption_provider in {"openai", "cosmos"}:
+            # Reuse the existing hosted VLM implementations only for the
+            # bounded, change-selected caption windows.  Gemini remains the
+            # free default; this is an explicit paid/credit override.
+            from .gemini_runtime import GeminiCallAttempt, GeminiCallDiagnostics
+            from .gemini_transcription import GeminiCaptionResult
+            from .vlm import NvidiaCosmosProvider, OpenAIVisionProvider
+
+            caption_model = str(models.get("caption") or "")
+            if caption_provider == "openai":
+                inner = OpenAIVisionProvider(
+                    str(runtime.get("openai_api_key") or ""),
+                    caption_model or settings.openai_vlm_model,
+                    settings.openai_vlm_timeout_seconds,
+                    settings.openai_vlm_retries,
+                    settings.openai_vlm_image_detail,
+                    settings.openai_vlm_max_frames,
+                )
+            else:
+                inner = NvidiaCosmosProvider(
+                    str(runtime.get("nvidia_api_key") or ""),
+                    caption_model or "nvidia/cosmos3-nano-reasoner",
+                    settings.openai_vlm_timeout_seconds,
+                    settings.openai_vlm_retries,
+                    8,
+                )
+
+            class HostedCaptioner:
+                model = caption_model or caption_provider
+
+                def caption_window(self, clip, window):
+                    description = inner.describe(clip.path, window)
+                    return GeminiCaptionResult(
+                        caption=description.caption(),
+                        confidence=description.confidence,
+                        evidence=tuple(description.actions + description.objects_and_colours),
+                        diagnostics=GeminiCallDiagnostics(
+                            model=self.model,
+                            operation=f"{caption_provider}_caption",
+                            attempts=[GeminiCallAttempt(attempt=1, status="succeeded")],
+                        ),
+                        model=self.model,
+                    )
+
+            bundle.pipeline.captioner = HostedCaptioner()
+            self._activity(
+                job,
+                "vlm",
+                "Using the selected paid VLM only for bounded caption windows",
+                provider=caption_provider,
+                model=caption_model,
+            )
+        report = bundle.pipeline.process_video(
+            job.video_path,
+            video_id=str(job.metadata.get("video_id") or "") or None,
+            duration_seconds=float(job.metadata.get("duration") or 0) or None,
+            has_audio=bool(job.metadata.get("has_audio")),
+        )
+        self._model_state(
+            job,
+            "gemini_api",
+            "ready",
+            "Hosted Gemini indexing calls completed",
+            provider_calls=dict(report.provider_calls),
+        )
+        job.total_windows = report.total_windows
+        job.current_window = report.indexed_windows
+        for record in report.records:
+            payload = dict(record.payload)
+            vectors = dict(record.vectors)
+            window_id = str(payload["window_id"])
+            caption = str(payload.get("caption") or "")
+            job.windows.append(
+                {
+                    "index": int(payload.get("window_index", len(job.windows))),
+                    "video_id": payload.get("video_id", ""),
+                    "window_id": window_id,
+                    "start": float(payload.get("start", 0)),
+                    "end": float(payload.get("end", 0)),
+                    "transcript": payload.get("transcript", ""),
+                    "change_scores": {},
+                    "selected": bool(payload.get("caption_selected")),
+                    "selection_reasons": ["embedding_change"] if payload.get("caption_selected") else [],
+                    "vlm_call_state": "direct" if payload.get("caption_direct") else "inherited" if caption else "unavailable",
+                    "caption": caption,
+                    "has_audio": bool(payload.get("has_audio")),
+                    "provenance": "direct" if payload.get("caption_direct") else "inherited" if payload.get("caption_inherited") else "unavailable",
+                    "confidence": float(payload.get("caption_confidence") or 0),
+                    "indexed": bool(sink),
+                    "point_id": None,
+                    "stored_payload": {key: value for key, value in payload.items() if key != "source_path"},
+                    "vectors": {name: _vector_summary(values) for name, values in vectors.items()},
+                    "openai": None,
+                    "cosmos": None,
+                    "errors": [error for key, error in report.errors.items() if key.startswith(window_id)],
+                }
+            )
+        job.errors.extend(
+            {"window_id": window_id, "message": message}
+            for window_id, message in report.errors.items()
+        )
+        job.report = {
+            "status": "completed",
+            "provider_mode": "api-gemini",
+            "embedding_profile": contract.profile_id,
+            "collection_name": contract.collection_name,
+            "total_windows": report.total_windows,
+            "successfully_indexed_windows": report.indexed_windows,
+            "failed_windows": report.failed_windows,
+            "selected_vlm_windows": report.selected_caption_windows,
+            "direct_captions": report.direct_caption_windows,
+            "inherited_captions": report.inherited_caption_windows,
+            "transcript_segments": report.transcript_segments,
+            "elapsed_seconds": report.elapsed_seconds,
+            "provider_calls": dict(report.provider_calls),
+            "qdrant_inserted": report.indexed_windows if sink else 0,
+            "errors": dict(report.errors),
+        }
 
     def _execute_pipeline(self, job, settings, mode):
         from .audio_encoder import ClapAudioEncoder
@@ -480,7 +785,7 @@ class JobManager:
         from .text_encoder import BgeM3TextEncoder
         from .transcription import FasterWhisperTranscriber
         from .visual_encoder import XClipVisualEncoder
-        from .vlm import NvidiaCosmosProvider, OpenAIVisionProvider
+        from .vlm import LocalQwenProvider, NvidiaCosmosProvider, OpenAIVisionProvider
 
         manager = self
 
@@ -857,6 +1162,63 @@ class JobManager:
                         }
 
             vlm = CosmosGuard()
+        elif mode == "local_qwen":
+            inner = LocalQwenProvider(
+                model_name=run_config.get("local_qwen_model") or settings.vlm_model,
+                device=settings.device,
+                timeout=settings.vlm_timeout_seconds,
+                retries=settings.vlm_retries,
+            )
+            self._model_state(
+                job,
+                "vlm",
+                "not_attempted",
+                "Local Qwen2.5-VL is configured and will load only for selected windows",
+                provider="local_qwen",
+                model=run_config.get("local_qwen_model") or settings.vlm_model,
+                device=settings.device,
+            )
+
+            class LocalQwenGuard:
+                def describe(self, *args):
+                    check()
+                    job.stage = "local_qwen_vlm"
+                    window = args[1]
+                    manager._model_state(
+                        job,
+                        "vlm",
+                        "loading",
+                        "Loading or running Local Qwen2.5-VL for a selected window",
+                        provider="local_qwen",
+                        window_index=window.index,
+                        device=settings.device,
+                    )
+                    try:
+                        result = inner.describe(*args)
+                        manager._model_state(
+                            job,
+                            "vlm",
+                            "ready",
+                            "Local Qwen2.5-VL caption received",
+                            provider="local_qwen",
+                            window_index=window.index,
+                            device=settings.device,
+                        )
+                        return result
+                    except Exception as exc:
+                        manager._model_state(
+                            job,
+                            "vlm",
+                            "failed",
+                            "Local Qwen2.5-VL failed",
+                            provider="local_qwen",
+                            window_index=window.index,
+                            error_type=type(exc).__name__,
+                            error=manager._safe_message(job, exc),
+                        )
+                        raise
+
+            vlm = LocalQwenGuard()
         elif mode == "mock":
             self._model_state(
                 job,

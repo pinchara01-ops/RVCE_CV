@@ -1,40 +1,97 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
-import { API, IndexedWindow, jsonFetch } from "@/lib/api";
+import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { API, IndexedWindow, RuntimeSession, jsonFetch, loadRuntimeSessionId } from "@/lib/api";
 
 export default function VideoLibraryPage() {
+  return <Suspense fallback={<main className="page-loading">Loading indexed video…</main>}><VideoLibraryContent /></Suspense>;
+}
+
+function VideoLibraryContent() {
   const { videoId } = useParams<{ videoId: string }>();
+  const searchParams = useSearchParams();
+  const runtimeSessionId = searchParams.get("runtime_session_id") || loadRuntimeSessionId();
+  const requestedProfileId = searchParams.get("profile_id");
+  const [runtimeSession, setRuntimeSession] = useState<RuntimeSession>();
+  const [runtimeSessionState, setRuntimeSessionState] = useState<"not_required" | "pending" | "ready" | "missing">(
+    () => runtimeSessionId ? "pending" : "not_required",
+  );
+  const profileId = runtimeSession?.profile.id || (runtimeSessionId ? undefined : requestedProfileId || "self-hosted-v1");
+  const profileQuery = profileId === "api-gemini-free-v1" && runtimeSessionId && runtimeSession?.profile.id === profileId
+    ? `&${new URLSearchParams({ profile_id: profileId, runtime_session_id: runtimeSessionId }).toString()}`
+    : "";
+  const profileQueryPrefix = profileQuery ? `?${profileQuery.slice(1)}` : "";
   const [windows, setWindows] = useState<IndexedWindow[]>([]);
   const [selected, setSelected] = useState<string>();
   const [selectedDetail, setSelectedDetail] = useState<IndexedWindow>();
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (!runtimeSessionId) return;
+    let cancelled = false;
+    const start = window.setTimeout(() => {
+      setRuntimeSessionState("pending");
+      setRuntimeSession(undefined);
+      jsonFetch<RuntimeSession>(`/api/runtime/session/${encodeURIComponent(runtimeSessionId)}`)
+        .then((session) => {
+          if (cancelled) return;
+          setRuntimeSession(session);
+          setRuntimeSessionState("ready");
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setRuntimeSessionState("missing");
+        });
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(start); };
+  }, [runtimeSessionId]);
+
+  useEffect(() => {
+    if (runtimeSessionState === "pending") return;
+    if (runtimeSessionState === "missing" || (requestedProfileId === "api-gemini-free-v1" && !runtimeSession)) {
+      const reset = window.setTimeout(() => {
+        setWindows([]);
+        setSelected(undefined);
+        setSelectedDetail(undefined);
+        setError("The API-based architecture session has expired or is unavailable. Return to Architecture to enter the cloud credentials again.");
+      }, 0);
+      return () => window.clearTimeout(reset);
+    }
+    let cancelled = false;
     // Loading every high-dimensional vector in a video makes the inspector
     // slow on a laptop. List the lightweight records first, then fetch the
     // selected record with its vector summaries below.
     jsonFetch<{ windows: IndexedWindow[] }>(
-      `/api/index/windows?video_id=${encodeURIComponent(videoId)}&limit=500&vectors=false`,
+      `/api/index/windows?video_id=${encodeURIComponent(videoId)}&limit=500&vectors=false${profileQuery}`,
     )
       .then((data) => {
+        if (cancelled) return;
         setWindows(data.windows);
         setSelected(data.windows[0]?.payload.window_id);
         setSelectedDetail(undefined);
       })
-      .catch((cause) => setError(String(cause)));
-  }, [videoId]);
+      .catch((cause) => {
+        if (!cancelled) setError(String(cause));
+      });
+    return () => { cancelled = true; };
+  }, [videoId, profileQuery, requestedProfileId, runtimeSession, runtimeSessionState]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || runtimeSessionState === "pending" || runtimeSessionState === "missing") return;
+    let cancelled = false;
     jsonFetch<IndexedWindow>(
-      `/api/index/windows/${encodeURIComponent(selected)}?vectors=true`,
+      `/api/index/windows/${encodeURIComponent(selected)}?vectors=true${profileQuery}`,
     )
-      .then(setSelectedDetail)
-      .catch((cause) => setError(String(cause)));
-  }, [selected]);
+      .then((window) => {
+        if (!cancelled) setSelectedDetail(window);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(String(cause));
+      });
+    return () => { cancelled = true; };
+  }, [selected, profileQuery, runtimeSessionState]);
 
   const listedActive = useMemo(
     () => windows.find((window) => window.payload.window_id === selected) ?? windows[0],
@@ -53,14 +110,14 @@ export default function VideoLibraryPage() {
           <h1>Indexed video</h1>
           <p className="code">{videoId}</p>
         </div>
-        <Link className="secondary button" href="/library">Back to library</Link>
+        <Link className="secondary button" href={`/library${profileQueryPrefix}`}>Back to library</Link>
       </div>
       {error && <p className="error panel">{error}</p>}
       {active && (
         <section className="video-inspector">
           <div className="video-stage">
             {canPlay ? (
-              <video controls src={`${API}/api/index/media/${encodeURIComponent(String(active.payload.window_id))}#t=${start},${end}`} />
+              <video controls src={`${API}/api/index/media/${encodeURIComponent(String(active.payload.window_id))}${profileQueryPrefix}#t=${start},${end}`} />
             ) : (
               <div className="media-unavailable">The original uploaded file is not available to the server.</div>
             )}

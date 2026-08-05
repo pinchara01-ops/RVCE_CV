@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [switch]$Setup
+    [switch]$Setup,
+    [switch]$ApiOnly,
+    [switch]$Restart
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,6 +33,22 @@ function Test-LocalPort {
     }
     catch {
         return $false
+    }
+}
+
+function Stop-LocalListener {
+    param(
+        [Parameter(Mandatory)][int]$Port,
+        [Parameter(Mandatory)][string]$ServiceName
+    )
+
+    $Listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    foreach ($Listener in $Listeners) {
+        $ProcessId = $Listener.OwningProcess
+        if ($ProcessId) {
+            Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+            Write-Host "Stopped $ServiceName process $ProcessId on port $Port."
+        }
     }
 }
 
@@ -68,7 +86,7 @@ function Find-BootstrapPython {
     return $null
 }
 
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+if (-not $ApiOnly -and -not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker Desktop is required to run Qdrant. Install/start Docker Desktop, then run this command again."
 }
 
@@ -103,7 +121,10 @@ if ($Setup) {
     }
 }
 
-if (-not (Test-LocalUrl "http://127.0.0.1:6333/healthz")) {
+if ($ApiOnly) {
+    Write-Host "API-only mode: skipping local Qdrant and Docker. Configure Qdrant Cloud in the Architecture page."
+}
+elseif (-not (Test-LocalUrl "http://127.0.0.1:6333/healthz")) {
     if (Test-LocalPort 6333) {
         Write-Warning "Qdrant is already listening on port 6333, but its health probe is slow. Skipping Docker startup."
     }
@@ -115,7 +136,15 @@ else {
     Write-Host "Qdrant is already running."
 }
 
-if (-not (Test-LocalUrl "http://127.0.0.1:8000/api/index/health")) {
+if ($Restart -and (Test-LocalPort 8000)) {
+    Stop-LocalListener -Port 8000 -ServiceName "processing API"
+}
+
+if ((Test-LocalPort 8000) -and -not (Test-LocalUrl "http://127.0.0.1:8000/api/runtime/profiles")) {
+    throw "Port 8000 is occupied by an older or different API process. Run .\\start-local.ps1 -Restart to replace it with this project's processing API."
+}
+
+if (-not (Test-LocalUrl "http://127.0.0.1:8000/api/runtime/profiles")) {
     $EscapedRoot = $Root.Replace("'", "''")
     $EscapedPython = $Python.Replace("'", "''")
     $EscapedModelCache = $ModelCache.Replace("'", "''")
@@ -139,6 +168,10 @@ else {
     Write-Host "The processing API is already running."
 }
 
+if ($Restart -and (Test-LocalPort 3000)) {
+    Stop-LocalListener -Port 3000 -ServiceName "browser UI"
+}
+
 if (-not (Test-LocalUrl "http://127.0.0.1:3000")) {
     $Npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
     if (-not $Npm) {
@@ -159,4 +192,9 @@ else {
 
 Write-Host ""
 Write-Host "Open http://127.0.0.1:3000"
-Write-Host "If this is the first run, wait briefly for the two local services to finish starting."
+if ($ApiOnly) {
+    Write-Host "If this is the first run, wait briefly for the API and browser UI to finish starting."
+}
+else {
+    Write-Host "If this is the first run, wait briefly for the local services to finish starting."
+}

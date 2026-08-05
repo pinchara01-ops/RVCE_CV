@@ -114,6 +114,26 @@ def _safe_error(exc):
     return f"{type(exc).__name__}: {first_line}"
 
 
+def _json_object_from_vlm_output(raw: object) -> dict:
+    """Accept a strict JSON object, including a model's fenced JSON response.
+
+    Local instruction-tuned VLMs sometimes wrap otherwise-valid JSON in a
+    Markdown fence.  We still reject prose or a non-object payload; this is a
+    small compatibility boundary rather than permissive output parsing.
+    """
+
+    if not isinstance(raw, str):
+        raise TypeError("VLM output must be a JSON string")
+    text = raw.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1)
+    parsed = json.loads(text)
+    if not isinstance(parsed, dict):
+        raise ValueError("VLM output must be a JSON object")
+    return parsed
+
+
 class VLMProvider(Protocol):
     def describe(self, video_path: Path, window: VideoWindow) -> VLMDescription: ...
 
@@ -134,7 +154,7 @@ class RetryingVLMProvider:
                     raw = future.result(timeout=self.timeout)
                 finally:
                     pool.shutdown(wait=False, cancel_futures=True)
-                return VLMDescription.model_validate(json.loads(raw))
+                return VLMDescription.model_validate(_json_object_from_vlm_output(raw))
             except Exception as exc:
                 last = exc
         raise VLMError(
@@ -145,7 +165,7 @@ class RetryingVLMProvider:
 class LocalQwenProvider(RetryingVLMProvider):
     def __init__(
         self,
-        model_name="Qwen/Qwen2.5-VL-7B-Instruct",
+        model_name="Qwen/Qwen2.5-VL-3B-Instruct",
         device="cpu",
         timeout=120,
         retries=2,

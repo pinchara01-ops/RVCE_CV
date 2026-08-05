@@ -79,11 +79,25 @@ def _search(vector_name: str, vector: list[float], top_k: int) -> list[dict]:
         # A structured HTTP response from a live server (e.g. 404 on a
         # collection that hasn't been created yet) - Qdrant is reachable,
         # there's just nothing to find. Treated as a normal empty result.
-        logger.warning("Qdrant search on '%s' failed (bad response): %s", vector_name, exc)
+        # Avoid logging a third-party response string.  Some HTTP clients
+        # include request URLs or Authorization context in exceptions.
+        logger.warning(
+            "Qdrant search on '%s' failed (bad response: %s)",
+            vector_name,
+            type(exc).__name__,
+        )
         return []
     except Exception as exc:  # noqa: BLE001 - genuine connection failure, not a bad response
-        logger.warning("Qdrant search on '%s' failed (unreachable): %s", vector_name, exc)
-        raise QdrantSearchError(f"Qdrant search on '{vector_name}' failed: {exc}") from exc
+        # The browser needs to distinguish a connection outage from no hits,
+        # not receive an exception string that could contain credentials.
+        logger.warning(
+            "Qdrant search on '%s' failed (unreachable: %s)",
+            vector_name,
+            type(exc).__name__,
+        )
+        raise QdrantSearchError(
+            f"Qdrant search on '{vector_name}' is unreachable ({type(exc).__name__})"
+        ) from exc
 
     if not hits:
         logger.warning("Qdrant search on '%s' returned no results", vector_name)
@@ -115,8 +129,8 @@ def validate_collection_schema(client: QdrantClient | None = None) -> list[str]:
         if not client.collection_exists(config.COLLECTION_NAME):
             return [f"collection '{config.COLLECTION_NAME}' does not exist"]
         info = client.get_collection(config.COLLECTION_NAME)
-    except Exception as exc:  # noqa: BLE001 - report connection failure as a finding, not a crash
-        return [f"could not fetch collection info: {exc}"]
+    except Exception as exc:  # noqa: BLE001 - report safely, without reflected credentials
+        return [f"could not fetch collection info ({type(exc).__name__})"]
 
     live_vectors = info.config.params.vectors
     if not isinstance(live_vectors, dict):
