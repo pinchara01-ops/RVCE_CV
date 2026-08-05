@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import SearchBar from '../components/SearchBar.jsx'
 import ResultRow from '../components/ResultRow.jsx'
-import { searchApi } from '../api/searchApi.js'
+import { searchApi, checkVerificationEnabled, verifyApi } from '../api/searchApi.js'
 import './ResultsPage.css'
 
 export default function ResultsPage() {
@@ -14,6 +14,11 @@ export default function ResultsPage() {
   const [latencyMs, setLatencyMs] = useState(null)
   const [source, setSource] = useState('live')
   const [errorMessage, setErrorMessage] = useState(null)
+  // window_id -> 'pending' | VerificationResult. Absent entirely (no key
+  // for a given window_id) means "not being verified" - either
+  // verification is off, or this candidate wasn't in the top N sent to
+  // /verify. Never populated at all for mock/error results.
+  const [verifications, setVerifications] = useState({})
 
   useEffect(() => {
     if (!query) {
@@ -24,6 +29,7 @@ export default function ResultsPage() {
 
     let cancelled = false
     setIsLoading(true)
+    setVerifications({})
 
     const t0 = performance.now()
     searchApi(query).then(({ results, source, error }) => {
@@ -33,6 +39,26 @@ export default function ResultsPage() {
       setErrorMessage(error ?? null)
       setLatencyMs(Math.round(performance.now() - t0))
       setIsLoading(false)
+
+      // Fired only after the primary results have already rendered -
+      // verification never delays or blocks the search response itself.
+      if (source === 'live' && results.length > 0) {
+        checkVerificationEnabled().then((enabled) => {
+          if (cancelled || !enabled) return
+
+          const candidateIds = results.map((r) => r.window_id)
+          setVerifications(Object.fromEntries(candidateIds.map((id) => [id, 'pending'])))
+
+          verifyApi(candidateIds, query).then((verifyResults) => {
+            if (cancelled) return
+            setVerifications((prev) => {
+              const next = { ...prev }
+              for (const v of verifyResults) next[v.candidate_id] = v
+              return next
+            })
+          })
+        })
+      }
     })
 
     return () => {
@@ -94,7 +120,7 @@ export default function ResultsPage() {
             <p className="results-empty font-mono">no matching windows found</p>
           )}
           {results.map((result) => (
-            <ResultRow key={result.window_id} result={result} />
+            <ResultRow key={result.window_id} result={result} verification={verifications[result.window_id]} />
           ))}
         </div>
       </main>

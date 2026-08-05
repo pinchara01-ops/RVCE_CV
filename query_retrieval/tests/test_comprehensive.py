@@ -52,9 +52,15 @@ def _fake_encode_query(query: str) -> dict[str, list[float]]:
 
 @pytest.fixture
 def client(monkeypatch):
+    # Decomposition/verification pinned off: this file tests the
+    # pre-decomposition pipeline, and a real GEMINI_API_KEY being present
+    # must not silently flip these tests onto the decomposition path
+    # (which defaults on when a key exists - see config.py).
     monkeypatch.setattr(encoders, "warmup", lambda: None)
     monkeypatch.setattr(api, "_encoders_ready", True)
     monkeypatch.setattr(encoders, "encode_query", _fake_encode_query)
+    monkeypatch.setattr(config, "ENABLE_QUERY_DECOMPOSITION", False)
+    monkeypatch.setattr(config, "ENABLE_VERIFICATION", False)
     with TestClient(api.app) as c:
         yield c
 
@@ -218,6 +224,7 @@ def test_first_query_immediately_after_startup_works(monkeypatch):
     request must work correctly, not just after some warm-up period."""
     monkeypatch.setattr(encoders, "warmup", lambda: None)
     monkeypatch.setattr(encoders, "encode_query", _fake_encode_query)
+    monkeypatch.setattr(config, "ENABLE_QUERY_DECOMPOSITION", False)
     with TestClient(api.app) as c:
         resp = c.post("/search", json={"query": "a dog barking", "top_k": 5})
     assert resp.status_code == 200

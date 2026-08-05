@@ -1,12 +1,21 @@
 """Reciprocal Rank Fusion across per-modality search results.
 
-Unweighted (architecture change: query routing was removed entirely).
-There's no more per-query modality weight signal to multiply in - all 4
-modalities are always searched, and RRF fuses purely on rank position. A
-modality irrelevant to a given query naturally produces low-relevance
-hits that rank far down its own list, contributing a tiny 1/(k+rank)
-score; fusion doesn't need to be told in advance which modality matters,
-rank position already reflects it.
+Weighting is optional (`weights` param, default None). With weights=None,
+every modality contributes on equal footing - `1/(k+rank)` with no
+scaling - which is the exact formula this module has always used since
+query routing was removed, and is byte-identical to that tested baseline.
+This is the path api.py uses whenever ENABLE_QUERY_DECOMPOSITION is off:
+the kill switch means "don't touch fusion.py's behavior at all," not "use
+degenerate equal weights that happen to rank the same."
+
+When a `weights` dict is passed (from query decomposition -
+decomposition.DecompositionResult.weights, expected to sum to ~1.0 across
+the 4 modalities), contribution becomes `weight * 1/(k+rank)`. A window
+appearing in multiple modality lists sums every (weighted) contribution,
+it is never overwritten. Since decomposition always searches all 4
+modalities even for a weight-0 one (see decomposition.py), a weight of
+0.0 doesn't remove a modality's hits from consideration by fusion - it
+just makes their contribution to the score exactly 0.
 """
 import logging
 
@@ -20,14 +29,17 @@ def rrf_fuse(
     results: dict[str, list[dict]],
     k: int = config.RRF_K,
     top_k: int | None = None,
+    weights: dict[str, float] | None = None,
 ) -> list[FusedHit]:
     """Fuse ranked per-modality hit lists into one ranked list.
 
     For each modality's list, a hit at 1-indexed rank `rank` contributes
-    `1 / (k + rank)` to that window_id's fused score - every modality
-    contributes on equal footing. Contributions accumulate across
-    modalities for the same window_id - a window appearing in multiple
-    modality lists sums every contribution, it is never overwritten.
+    `weight * 1 / (k + rank)` to that window_id's fused score, where
+    `weight` is 1.0 for every modality if `weights` is None (today's
+    default, unweighted behavior), or `weights.get(modality, 0.0)`
+    otherwise. Contributions accumulate across modalities for the same
+    window_id - a window appearing in multiple modality lists sums every
+    contribution, it is never overwritten.
 
     A missing or empty modality entry in `results` is handled defensively
     rather than crashing.
@@ -45,12 +57,14 @@ def rrf_fuse(
         if not hits:
             continue
 
+        modality_weight = 1.0 if weights is None else weights.get(modality, 0.0)
+
         for rank, hit in enumerate(hits, start=1):
             window_id = hit.get("window_id")
             if window_id is None:
                 continue
 
-            contribution = 1.0 / (k + rank)
+            contribution = modality_weight * (1.0 / (k + rank))
             scores[window_id] = scores.get(window_id, 0.0) + contribution
             entry = ModalityEvidence(modality=modality, rank=rank, contribution=contribution)
 

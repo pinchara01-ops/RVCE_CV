@@ -135,3 +135,37 @@
   font-size: 12px;
   color: var(--color-ink-muted);
 }
+
+.verify-badge {
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+  padding: 3px 10px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.verify-badge--pending {
+  color: var(--color-ink-faint);
+  background: rgba(43, 38, 34, 0.04);
+  border-color: var(--color-border);
+}
+
+.verify-badge--verified {
+  color: var(--color-olive);
+  background: rgba(95, 111, 82, 0.13);
+  border-color: rgba(95, 111, 82, 0.35);
+}
+
+.verify-badge--rejected {
+  color: var(--color-rust);
+  background: rgba(184, 83, 47, 0.1);
+  border-color: rgba(184, 83, 47, 0.32);
+}
+
+.verify-badge--unavailable {
+  color: var(--color-ink-faint);
+  background: rgba(43, 38, 34, 0.05);
+  border-color: var(--color-border);
+  font-style: italic;
+}

@@ -38,9 +38,20 @@ def seeded_collection():
 @pytest.fixture
 def api_client(monkeypatch):
     """TestClient with encoder warmup stubbed out - loading real X-CLIP/CLAP/
-    BGE-M3 in every test run would be multi-minute and network-dependent."""
+    BGE-M3 in every test run would be multi-minute and network-dependent.
+
+    Query decomposition/verification are explicitly pinned off here: this
+    file tests the pre-decomposition retrieval pipeline in isolation, and
+    a real GEMINI_API_KEY being present in query_retrieval/.env must not
+    silently change these tests' behavior (decomposition defaults on when
+    a key is present - see config.py). Decomposition/verification get
+    their own dedicated tests in test_decomposition.py/test_verification.py/
+    test_kill_switches.py.
+    """
     monkeypatch.setattr(encoders, "warmup", lambda: None)
     monkeypatch.setattr(api, "_encoders_ready", True)
+    monkeypatch.setattr(config, "ENABLE_QUERY_DECOMPOSITION", False)
+    monkeypatch.setattr(config, "ENABLE_VERIFICATION", False)
     with TestClient(api.app) as c:
         yield c
 

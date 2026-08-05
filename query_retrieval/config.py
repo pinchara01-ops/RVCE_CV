@@ -75,3 +75,43 @@ MERGE_GAP_SECONDS: float = float(os.getenv("MERGE_GAP_SECONDS", "5.0"))
 # near-continuous activity can't swallow itself into a single giant result.
 MAX_MERGE_DURATION_SECONDS: float = float(os.getenv("MAX_MERGE_DURATION_SECONDS", "60.0"))
 MAX_MERGE_WINDOW_COUNT: int = _int("MAX_MERGE_WINDOW_COUNT", 8)
+
+# --- LLM (Gemini) - query decomposition and verification ---
+# Both features are independently killable and both degrade to exactly
+# today's tested behavior (equal-weight, no verification) on any failure -
+# see decomposition.py / verification.py module docstrings and the
+# README's "Kill switch reference" table.
+GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+def _default_decomposition_enabled(key: str | None) -> bool:
+    """Pure function, directly unit-testable without reloading this
+    module (which would mutate shared global state for every other test
+    in the same pytest session)."""
+    return bool(key)
+
+
+# Decomposition defaults ON when a key is present, but this is a genuinely
+# separate flag from key-presence (not `bool(GEMINI_API_KEY)` inline at
+# every call site) specifically so it can be force-disabled even with a
+# valid key - e.g. to reproduce/debug the pre-decomposition baseline
+# without unsetting the key.
+ENABLE_QUERY_DECOMPOSITION: bool = _bool(
+    "ENABLE_QUERY_DECOMPOSITION", default=_default_decomposition_enabled(GEMINI_API_KEY)
+)
+# Deliberately much tighter than the old (removed) router's 3s timeout -
+# a daemon-thread hard-kill (see gemini_client.call_with_hard_timeout),
+# not a library-level timeout, so this bound is real regardless of what
+# the underlying HTTP call is doing. 2.0s gives comfortable margin above
+# real measured single-request latency for this call (0.2-1.3s observed
+# across 10 consecutive calls from a normal network path - see README
+# Section 2) without being loose enough to mask a genuine problem.
+DECOMPOSITION_TIMEOUT_SECONDS: float = float(os.getenv("DECOMPOSITION_TIMEOUT_SECONDS", "2.0"))
+
+# Verification defaults OFF even with a valid key - explicit opt-in, since
+# it's a second LLM call path with its own cost/latency/failure surface.
+ENABLE_VERIFICATION: bool = _bool("ENABLE_VERIFICATION", False)
+VERIFICATION_TIMEOUT_SECONDS: float = float(os.getenv("VERIFICATION_TIMEOUT_SECONDS", "2.0"))
+# Only the top-N candidates by fused_score get verified - cost control,
+# verification is O(candidates) LLM calls, not O(1).
+VERIFICATION_TOP_N: int = _int("VERIFICATION_TOP_N", 5)

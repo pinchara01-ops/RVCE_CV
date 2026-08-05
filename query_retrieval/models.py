@@ -88,3 +88,59 @@ class MergedRegion(BaseModel):
     # was taken from (same one payload comes from) - not a merge across
     # every constituent, so entries still sum exactly to fused_score.
     modality_evidence: list[ModalityEvidence] = Field(default_factory=list)
+
+
+class DecompositionResult(BaseModel):
+    """Output of decomposition.decompose_query(): per-modality query text
+    plus RRF weights. Always fully populated regardless of which of the
+    three fallback tiers (cache/live/deterministic) produced it - the
+    deterministic tier just sets every *_query to the original query
+    unchanged and every weight to 0.25, which is what makes it
+    behaviorally equivalent to "no decomposition" for search purposes
+    (see decomposition.py, fusion.rrf_fuse's weights=None default)."""
+
+    visual_query: str
+    audio_query: str
+    speech_query: str
+    caption_query: str
+    required_conditions: list[str] = Field(default_factory=list)
+    weights: dict[str, float]
+    # Which of cache / live / fallback actually produced this result -
+    # exposed for logging/debugging, not required by any caller.
+    tier: str = "fallback"
+
+
+class VerificationResult(BaseModel):
+    """Output of verification.verify_candidate() for one candidate.
+
+    `state` is always one of three values - "verified" (LLM checked and
+    matched), "rejected" (LLM checked and did not match), or
+    "verification_unavailable" (the check itself failed/timed out/was
+    disabled - NOT the same as "rejected", and must never be reported as
+    a match). `match`/`confidence`/etc are only populated when state is
+    "verified" or "rejected"; they stay None/empty on "unavailable".
+    """
+
+    candidate_id: str
+    state: str
+    match: bool | None = None
+    confidence: float | None = None
+    satisfied_conditions: list[str] = Field(default_factory=list)
+    missing_conditions: list[str] = Field(default_factory=list)
+    contradictions: list[str] = Field(default_factory=list)
+    evidence: str = ""
+    reason: str = ""
+
+
+class VerifyRequest(BaseModel):
+    """candidate_ids are expected in fused_score-descending order, as
+    returned by /search's `results[].window_id` - this endpoint doesn't
+    re-sort them, it just truncates to the first VERIFICATION_TOP_N."""
+
+    candidate_ids: list[str]
+    query: str
+    required_conditions: list[str] = Field(default_factory=list)
+
+
+class VerifyResponse(BaseModel):
+    results: list[VerificationResult]

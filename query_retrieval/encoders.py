@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from query_retrieval import config
+from query_retrieval.models import DecompositionResult
 
 logger = logging.getLogger(__name__)
 
@@ -148,17 +149,13 @@ def _safe_encode(modality: str, encode_fn: Callable[[str], list[float]], query: 
         return None
 
 
-def encode_query(query: str) -> dict[str, list[float]]:
-    """Encode `query` for all 4 modalities, concurrently.
-
-    Always encodes every modality (architecture change: query routing was
-    removed - Weighted RRF suppresses irrelevant modalities through rank,
-    so gating encoding on a router's per-query weights isn't needed). The 4
-    encoder calls run in a thread pool rather than sequentially - each is a
-    separate model forward pass (X-CLIP, CLAP, BGE-M3 x2) with no shared
-    mutable state between them (see _bge_m3_lock for the one exception),
-    so running them concurrently is safe and turns ~4 sequential model
-    calls into roughly the cost of the slowest one.
+def _encode_many(queries: dict[str, str]) -> dict[str, list[float]]:
+    """Encode a per-modality dict of query strings concurrently, one
+    encoder call per entry. Each is a separate model forward pass (X-CLIP,
+    CLAP, BGE-M3 x2) with no shared mutable state between them (see
+    _bge_m3_lock for the one exception), so running them concurrently is
+    safe and turns ~4 sequential model calls into roughly the cost of the
+    slowest one.
 
     If encoding a modality fails mid-query (e.g. OOM), that modality is
     logged and dropped from the result - callers proceed with whatever
@@ -167,8 +164,9 @@ def encode_query(query: str) -> dict[str, list[float]]:
     treats that as a hard failure, not a silent empty search.
     """
     futures = {
-        _encode_executor.submit(_safe_encode, modality, encode_fn, query): modality
-        for modality, encode_fn in _ENCODERS.items()
+        _encode_executor.submit(_safe_encode, modality, _ENCODERS[modality], text): modality
+        for modality, text in queries.items()
+        if modality in _ENCODERS
     }
     vectors: dict[str, list[float]] = {}
     for future, modality in futures.items():
@@ -176,3 +174,32 @@ def encode_query(query: str) -> dict[str, list[float]]:
         if result is not None:
             vectors[modality] = result
     return vectors
+
+
+def encode_query(query: str) -> dict[str, list[float]]:
+    """Encode `query` identically for all 4 modalities, concurrently.
+
+    Always encodes every modality (architecture change: query routing was
+    removed - RRF fusion suppresses irrelevant modalities through rank/
+    weight, so gating encoding on a router's per-query weights isn't
+    needed). This is the path used whenever query decomposition is off
+    (ENABLE_QUERY_DECOMPOSITION=false) or unavailable - see
+    encode_decomposed() for the per-modality-query-text variant used when
+    decomposition is on.
+    """
+    return _encode_many({modality: query for modality in _ENCODERS})
+
+
+def encode_decomposed(decomposition: DecompositionResult) -> dict[str, list[float]]:
+    """Encode each modality's decomposition-specific query text with its
+    own encoder, concurrently - used when query decomposition is enabled.
+    Even a modality decomposition.py assigned weight 0.0 still gets
+    encoded and searched here; the weight is applied later, purely in
+    fusion, never as a search-skip gate (see decomposition.py, fusion.py).
+    """
+    return _encode_many({
+        "visual": decomposition.visual_query,
+        "audio": decomposition.audio_query,
+        "speech": decomposition.speech_query,
+        "caption": decomposition.caption_query,
+    })

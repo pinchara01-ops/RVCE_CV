@@ -141,6 +141,11 @@ def perf_api_client(monkeypatch):
     # test would only ever exercise merge_windows() on ~15 hits regardless of
     # how many points exist, and wouldn't be a scale check of merge itself.
     monkeypatch.setattr(config, "DEFAULT_TOP_K", _TOTAL_WINDOWS)
+    # Pinned off: this is a pre-decomposition scale/regression check, and a
+    # real GEMINI_API_KEY being present must not silently route it onto the
+    # decomposition path (which would call encoders.encode_decomposed(),
+    # not the encode_query() stub above).
+    monkeypatch.setattr(config, "ENABLE_QUERY_DECOMPOSITION", False)
     with TestClient(api.app) as c:
         yield c
 

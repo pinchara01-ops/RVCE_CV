@@ -102,6 +102,83 @@ def test_payload_carried_from_first_seen_modality():
     assert fused[0].payload.video_id == "video_visual"  # visual iterated first (dict order)
 
 
+# --- weighted RRF (query decomposition) ---
+
+
+def test_weights_none_is_byte_identical_to_unweighted_baseline():
+    """weights=None (the default, used whenever ENABLE_QUERY_DECOMPOSITION
+    is off) must produce the exact same scores as the pre-decomposition
+    formula - this is the kill switch's core guarantee. Regression-checked
+    against literal hand-computed values, not just "same ranking"."""
+    results = {
+        "visual": [_hit("w1"), _hit("w2")],
+        "audio": [_hit("w2"), _hit("w1")],
+    }
+    fused = rrf_fuse(results, k=K)
+    by_id = {h.window_id: h for h in fused}
+
+    assert by_id["w1"].fused_score == (1.0 / (K + 1)) + (1.0 / (K + 2))
+    assert by_id["w2"].fused_score == (1.0 / (K + 2)) + (1.0 / (K + 1))
+
+
+def test_weights_scale_contribution_per_modality():
+    results = {
+        "visual": [_hit("w1")],  # rank 1
+        "audio": [_hit("w1")],   # rank 1
+    }
+    weights = {"visual": 0.9, "audio": 0.1, "speech": 0.0, "caption": 0.0}
+    fused = rrf_fuse(results, k=K, weights=weights)
+    w1 = fused[0]
+
+    expected = 0.9 * (1.0 / (K + 1)) + 0.1 * (1.0 / (K + 1))
+    assert abs(w1.fused_score - expected) < 1e-12
+    by_modality = {e.modality: e for e in w1.modality_evidence}
+    assert abs(by_modality["visual"].contribution - 0.9 * (1.0 / (K + 1))) < 1e-12
+    assert abs(by_modality["audio"].contribution - 0.1 * (1.0 / (K + 1))) < 1e-12
+
+
+def test_zero_weight_modality_contributes_zero_but_is_not_dropped():
+    """A weight-0 modality's hits are still present in fusion's inputs
+    (decomposition.py never skips searching a modality) - this proves
+    fusion handles that correctly: the hit still appears with a real
+    modality_evidence entry, just contributing 0 to the score."""
+    results = {
+        "visual": [_hit("w1")],
+        "audio": [_hit("w1")],
+    }
+    weights = {"visual": 1.0, "audio": 0.0, "speech": 0.0, "caption": 0.0}
+    fused = rrf_fuse(results, k=K, weights=weights)
+    w1 = fused[0]
+
+    assert sorted(w1.matched_modalities) == ["audio", "visual"]
+    by_modality = {e.modality: e for e in w1.modality_evidence}
+    assert by_modality["audio"].contribution == 0.0
+    assert by_modality["audio"].rank == 1  # still recorded, just contributes nothing
+    assert w1.fused_score == 1.0 / (K + 1)  # only visual's contribution counts
+
+
+def test_equal_weight_fallback_preserves_ranking_of_unweighted_baseline():
+    """decomposition.py's fallback tier uses weights={all: 0.25} - a
+    uniform positive scalar on every term preserves ranking/ordering
+    exactly, even though absolute score values differ from the
+    weights=None baseline by that constant factor (0.25x). This is the
+    "equal-weight fallback identical results" guarantee from a ranking/
+    selection point of view, which is what actually flows into
+    merge_windows() and top_k truncation."""
+    results = {
+        "visual": [_hit("w1"), _hit("w2"), _hit("w3")],
+        "audio": [_hit("w3"), _hit("w1"), _hit("w2")],
+        "speech": [_hit("w2"), _hit("w3"), _hit("w1")],
+        "caption": [_hit("w1"), _hit("w3"), _hit("w2")],
+    }
+    unweighted = rrf_fuse(results, k=K)
+    equal_weighted = rrf_fuse(results, k=K, weights={"visual": 0.25, "audio": 0.25, "speech": 0.25, "caption": 0.25})
+
+    assert [h.window_id for h in unweighted] == [h.window_id for h in equal_weighted]
+    for u, w in zip(unweighted, equal_weighted):
+        assert abs(w.fused_score - 0.25 * u.fused_score) < 1e-12
+
+
 def test_modality_evidence_populated_with_correct_rank_and_contribution():
     results = {
         "visual": [_hit("w1"), _hit("other_v")],
