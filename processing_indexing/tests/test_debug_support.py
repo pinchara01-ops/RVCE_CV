@@ -374,3 +374,122 @@ def test_openai_usage_separates_success_failure_and_unknown():
         "output_tokens": 3,
         "total_tokens": 15,
     }
+
+
+def test_activity_timeline_is_public_sanitized_and_uses_iso_timestamps(tmp_path):
+    from datetime import datetime
+
+    manager = JobManager(tmp_path)
+    path = tmp_path / "job" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job(
+        "job",
+        path.parent,
+        path,
+        {"openai_api_key": "[REDACTED]"},
+        {},
+        private_config={"openai_api_key": "real-secret"},
+    )
+
+    manager._activity(
+        job,
+        "test",
+        "Provider returned real-secret",
+        api_key="real-secret",
+    )
+    manager._model_state(
+        job,
+        "whisper",
+        "ready",
+        "Whisper ready after real-secret",
+    )
+    public = job.public()
+
+    assert datetime.fromisoformat(public["activity"][0]["timestamp"])
+    assert public["activity"][0]["message"] == "Provider returned [REDACTED]"
+    assert "real-secret" not in json.dumps(public)
+    assert public["runtime_models"]["whisper"]["state"] == "ready"
+    assert job.events[-1]["event"] == "activity"
+
+
+def test_activity_endpoint_limits_the_diagnostic_timeline(tmp_path, monkeypatch):
+    from processing_indexing import debug_api
+
+    manager = JobManager(tmp_path)
+    path = tmp_path / "job" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job("job", path.parent, path, {}, {})
+    manager.jobs[job.id] = job
+    for index in range(3):
+        manager._activity(job, "test", f"entry {index}")
+    monkeypatch.setattr(debug_api, "manager", manager)
+
+    response = TestClient(debug_api.app).get(
+        "/api/processing/jobs/job/activity?limit=2"
+    )
+
+    assert response.status_code == 200
+    assert [entry["message"] for entry in response.json()["activity"]] == [
+        "entry 1",
+        "entry 2",
+    ]
+
+
+def test_activity_is_exported_with_a_completed_job(tmp_path):
+    manager = JobManager(tmp_path)
+    path = tmp_path / "job" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job("job", path.parent, path, {}, {})
+    manager._activity(job, "job", "A useful diagnostic")
+    manager._write_artifacts(job)
+
+    exported = json.loads((job.directory / "exports" / "activity.json").read_text())
+
+    assert exported[0]["message"] == "A useful diagnostic"
+
+
+def test_faster_whisper_progress_callback_receives_segment_end_times(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    class Segment:
+        def __init__(self, start, end, text):
+            self.start, self.end, self.text = start, end, text
+
+    class FakeWhisperModel:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def transcribe(self, _path):
+            return iter([Segment(0, 1.5, "one"), Segment(1.5, 4.0, "two")]), {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=FakeWhisperModel),
+    )
+    from processing_indexing.transcription import FasterWhisperTranscriber
+
+    reported = []
+    transcript = FasterWhisperTranscriber().transcribe(
+        "clip.mp4", True, progress_callback=reported.append
+    )
+
+    assert [segment.text for segment in transcript] == ["one", "two"]
+    assert reported == [1.5, 4.0]
+
+
+def test_cached_hugging_face_model_loads_without_a_hub_lookup(tmp_path, monkeypatch):
+    from processing_indexing.model_cache import model_load_kwargs
+
+    monkeypatch.setenv("HF_HOME", str(tmp_path))
+    repository = tmp_path / "hub" / "models--org--model"
+    (repository / "refs").mkdir(parents=True)
+    (repository / "refs" / "main").write_text("cached-revision\n")
+    (repository / "snapshots" / "cached-revision").mkdir(parents=True)
+
+    assert model_load_kwargs("org/model") == {"local_files_only": True}
+    assert model_load_kwargs("missing/model") == {}

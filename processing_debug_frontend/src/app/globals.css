@@ -65,6 +65,7 @@ h3 { font-size: 15px; }
 .status-strip { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 28px; padding: 13px 16px; border: 1px solid var(--line); background: var(--surface-muted); }
 .status-strip.ready { border-color: oklch(0.75 0.07 154); }
 .status-strip.warning { border-color: oklch(0.78 0.09 76); }
+.status-strip.error { border-color: oklch(0.70 0.11 28); background: oklch(0.96 0.025 28); }
 .status-strip div { display: grid; gap: 1px; }
 .status-strip span { color: var(--muted); font-size: 13px; }
 
@@ -92,6 +93,31 @@ h3 { font-size: 15px; }
 .panel { padding: 16px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .metric { margin-top: 4px; font-size: 26px; font-weight: 750; letter-spacing: -0.04em; }
+.restart-state { max-width: 680px; text-align: left; }
+.restart-state .actions { margin: 22px 0 0; }
+.diagnostic-section { margin-top: 38px; padding: 24px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.diagnostic-section .section-heading { align-items: flex-start; }
+.diagnostic-section .section-heading > div { max-width: 700px; }
+.diagnostic-count { flex: 0 0 auto; color: var(--muted); font: 12px "SFMono-Regular", Consolas, monospace; }
+.diagnostic-latest { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 15px; border: 1px solid oklch(0.80 0.028 238); background: oklch(0.955 0.018 238); }
+.diagnostic-latest.warning { border-color: oklch(0.80 0.09 76); background: oklch(0.97 0.025 76); }
+.diagnostic-latest.error { border-color: oklch(0.75 0.11 28); background: oklch(0.97 0.022 28); }
+.diagnostic-latest > div { display: grid; gap: 3px; }
+.diagnostic-latest > div span { color: var(--muted); font-size: 13px; }
+.diagnostic-latest time { color: var(--muted); font: 12px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.diagnostic-label { color: var(--accent-strong); font-size: 12px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+.diagnostic-list { margin: 0; padding: 0; list-style: none; border-bottom: 1px solid var(--line); }
+.diagnostic-row { display: grid; grid-template-columns: 76px 64px minmax(0, 1fr); gap: 12px; align-items: start; padding: 13px 0; border-top: 1px solid var(--line); }
+.diagnostic-time { padding-top: 2px; color: var(--muted); font: 12px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.diagnostic-level { display: inline-flex; align-self: start; justify-content: center; min-width: 52px; border: 1px solid oklch(0.80 0.028 238); border-radius: 999px; padding: 2px 7px; color: oklch(0.39 0.07 238); background: oklch(0.94 0.025 238); font-size: 11px; font-weight: 750; text-transform: uppercase; }
+.diagnostic-level.warning { border-color: oklch(0.79 0.09 76); color: oklch(0.44 0.10 76); background: oklch(0.96 0.03 76); }
+.diagnostic-level.error { border-color: oklch(0.75 0.11 28); color: var(--bad); background: oklch(0.97 0.022 28); }
+.diagnostic-message { display: grid; gap: 2px; min-width: 0; }
+.diagnostic-message > span { color: var(--muted); font-size: 12px; }
+.diagnostic-detail { margin-top: 7px; }
+.diagnostic-detail summary { cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 700; }
+.diagnostic-detail pre { margin-top: 8px; }
+.diagnostic-empty { margin: 0; padding: 16px 0 2px; color: var(--muted); }
 .scroll { overflow: auto; }
 table { width: 100%; border-collapse: collapse; background: var(--surface); }
 th, td { padding: 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
@@ -146,4 +172,6 @@ video { width: 100%; max-height: 510px; border-radius: 7px; background: oklch(0.
   .model-row { grid-template-columns: 1fr; gap: 4px; }
   .search-form { grid-template-columns: 1fr; }
   .workflow-list li { grid-template-columns: 48px 1fr; }
+  .diagnostic-latest { grid-template-columns: 1fr; gap: 5px; }
+  .diagnostic-row { grid-template-columns: 68px 58px minmax(0, 1fr); gap: 8px; }
 }

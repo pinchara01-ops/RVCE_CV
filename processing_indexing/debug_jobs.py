@@ -1,6 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass, field, replace
-from pathlib import Path
+
 import csv
 import io
 import json
@@ -8,13 +7,18 @@ import os
 import threading
 import time
 import uuid
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from pathlib import Path
+
 from .config import Settings
+from .models import VLMDescription
 from .preflight import model_statuses
 from .probe import probe_video, stable_video_id
-from .models import VLMDescription
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 SECRET_KEYS = {"openai_api_key", "api_key", "qdrant_api_key", "authorization"}
+MAX_ACTIVITY_ENTRIES = 400
 
 
 def summarize_openai_usage(openai_debug):
@@ -99,6 +103,14 @@ class Job:
     cancel_requested: bool = False
     windows: list[dict] = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
+    # Human-readable, structured diagnostics intended for the processing UI.
+    # Unlike ``events`` (which is the transport/SSE stream), these records are
+    # retained in the status payload and can be rendered as a timeline.
+    activity: list[dict] = field(default_factory=list)
+    activity_sequence: int = field(default=0, repr=False)
+    # Dynamic model state is separate from preflight cache state.  It lets the
+    # UI distinguish "cached locally" from "currently loading" and "ready".
+    model_activity: dict[str, dict] = field(default_factory=dict)
     report: dict = field(default_factory=dict)
     errors: list[dict] = field(default_factory=list)
     evaluations: dict[str, dict] = field(default_factory=dict)
@@ -111,6 +123,19 @@ class Job:
         return self.private_config or self.config
 
     def public(self):
+        statuses = [
+            x.model_dump()
+            for x in model_statuses(
+                Settings.from_env(), self.config.get("vlm_mode")
+            )
+        ]
+        for status in statuses:
+            runtime = self.model_activity.get(status["component"])
+            if runtime is None:
+                continue
+            status["loading_attempted"] = runtime["state"] != "not_attempted"
+            status["load_success"] = runtime["state"] == "ready"
+            status["message"] = runtime["message"]
         return sanitize(
             {
                 "job_id": self.id,
@@ -125,12 +150,9 @@ class Job:
                 "metadata": self.metadata,
                 "summary": self.report,
                 "errors": self.errors,
-                "model_status": [
-                    x.model_dump()
-                    for x in model_statuses(
-                        Settings.from_env(), self.config.get("vlm_mode")
-                    )
-                ],
+                "model_status": statuses,
+                "activity": self.activity,
+                "runtime_models": self.model_activity,
             }
         )
 
@@ -168,6 +190,18 @@ class JobManager:
         )
         self.jobs[job_id] = job
         self._event(job, "created")
+        self._activity(
+            job,
+            "upload",
+            "Upload validated and ready to process",
+            filename=name,
+            bytes=len(data),
+            duration_seconds=metadata.get("duration"),
+            container=metadata.get("container"),
+            video_codec=metadata.get("codec"),
+            has_audio=metadata.get("has_audio"),
+            dimensions=[metadata.get("width"), metadata.get("height")],
+        )
         return job
 
     def get(self, job_id: str) -> Job:
@@ -186,6 +220,80 @@ class JobManager:
             }
         )
 
+    def _safe_message(self, job: Job, message: object) -> str:
+        """Keep browser diagnostics useful without echoing a supplied key."""
+        result = str(message)
+
+        def visit(value: object, name: str = ""):
+            nonlocal result
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    visit(nested, str(key))
+            elif isinstance(value, (list, tuple)):
+                for nested in value:
+                    visit(nested, name)
+            elif (
+                isinstance(value, str)
+                and value
+                and ("key" in name.lower() or name.lower() == "authorization")
+            ):
+                result = result.replace(value, "[REDACTED]")
+
+        visit(job.runtime_config())
+        return result
+
+    def _activity(
+        self,
+        job: Job,
+        area: str,
+        message: object,
+        *,
+        level: str = "info",
+        **details,
+    ) -> dict:
+        """Append one bounded, UI-safe diagnostic record and publish it over SSE."""
+        entry = {
+            "sequence": job.activity_sequence,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": level,
+            "area": area,
+            "message": self._safe_message(job, message),
+        }
+        job.activity_sequence += 1
+        if details:
+            entry["details"] = sanitize(details)
+        job.activity.append(entry)
+        if len(job.activity) > MAX_ACTIVITY_ENTRIES:
+            del job.activity[: len(job.activity) - MAX_ACTIVITY_ENTRIES]
+        self._event(job, "activity", activity=entry)
+        return entry
+
+    def _model_state(
+        self,
+        job: Job,
+        component: str,
+        state: str,
+        message: object,
+        **details,
+    ) -> None:
+        record = {
+            "state": state,
+            "message": self._safe_message(job, message),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if details:
+            record["details"] = sanitize(details)
+        job.model_activity[component] = record
+        self._activity(
+            job,
+            "model",
+            message,
+            level="error" if state == "failed" else "info",
+            component=component,
+            state=state,
+            **details,
+        )
+
     def start(self, job_id: str):
         job = self.get(job_id)
         with self._lock:
@@ -198,6 +306,12 @@ class JobManager:
                 raise RuntimeError("Job cannot be started")
             self._active = job_id
             job.status = "queued"
+            self._activity(
+                job,
+                "job",
+                "Processing job queued",
+                stage="queued",
+            )
         threading.Thread(target=self._run, args=(job,), daemon=True).start()
         return job
 
@@ -205,6 +319,13 @@ class JobManager:
         job = self.get(job_id)
         job.cancel_requested = True
         self._event(job, "cancel_requested")
+        self._activity(
+            job,
+            "job",
+            "Cancellation requested. The current model call will finish safely before the job stops.",
+            level="warning",
+            stage=job.stage,
+        )
         return job
 
     def _run(self, job: Job):
@@ -216,6 +337,19 @@ class JobManager:
             settings = self._settings(job)
             run_config = job.runtime_config()
             mode = run_config.get("vlm_mode", "selection_only")
+            self._activity(
+                job,
+                "job",
+                "Processing started",
+                stage="configuration",
+                device=settings.device,
+                vlm_mode=mode,
+                index_qdrant=bool(run_config.get("index_qdrant")),
+                collection=settings.collection_name,
+                window_seconds=settings.window_seconds,
+                stride_seconds=settings.stride_seconds,
+                max_windows=settings.max_windows,
+            )
             if mode not in {"selection_only", "mock", "openai", "cosmos"}:
                 raise ValueError("Unsupported VLM mode")
             if mode == "mock" and run_config.get("index_qdrant"):
@@ -232,8 +366,9 @@ class JobManager:
                 job.stage = "cancelled"
                 job.report["status"] = "cancelled"
                 job.finished_at = time.time()
-                self._write_artifacts(job)
+                self._activity(job, "job", "Processing cancelled safely")
                 self._event(job, "cancelled")
+                self._write_artifacts(job)
                 return
             pipeline_status = job.report.get("status", "failed")
             if pipeline_status == "failed":
@@ -241,36 +376,60 @@ class JobManager:
                 job.status = "failed"
                 job.progress = 1.0
                 job.finished_at = time.time()
-                self._write_artifacts(job)
+                self._activity(
+                    job,
+                    "job",
+                    "Processing pipeline finished without an indexable result",
+                    level="error",
+                )
                 self._event(job, "failed", message="Processing pipeline failed")
+                self._write_artifacts(job)
                 return
             job.stage = pipeline_status
             job.status = pipeline_status
             job.progress = 1.0
             job.finished_at = time.time()
-            self._write_artifacts(job)
+            self._activity(
+                job,
+                "job",
+                "Processing finished",
+                status=pipeline_status,
+                indexed_windows=job.report.get("successfully_indexed_windows"),
+                failed_windows=job.report.get("failed_windows"),
+            )
             self._event(job, pipeline_status)
+            self._write_artifacts(job)
         except Exception as exc:
             if job.cancel_requested:
                 job.status = "cancelled"
                 job.stage = "cancelled"
                 job.finished_at = time.time()
                 job.report = {**job.report, "status": "cancelled"}
-                self._write_artifacts(job)
+                self._activity(job, "job", "Processing cancelled safely")
                 self._event(job, "cancelled")
+                self._write_artifacts(job)
                 return
             job.status = "failed"
             job.stage = "failed"
             job.finished_at = time.time()
-            job.errors.append({"message": str(exc)})
+            safe_error = self._safe_message(job, exc)
+            job.errors.append({"message": safe_error})
             job.report = {
                 **job.report,
                 "status": "failed",
                 "errors": job.report.get("errors", {}),
                 "stage_durations": job.report.get("stage_durations", {}),
             }
+            self._activity(
+                job,
+                "job",
+                "Processing stopped with an error",
+                level="error",
+                error_type=type(exc).__name__,
+                error=safe_error,
+            )
+            self._event(job, "failed", message=safe_error)
             self._write_artifacts(job)
-            self._event(job, "failed", message=str(exc))
         finally:
             with self._lock:
                 if self._active == job.id:
@@ -323,6 +482,8 @@ class JobManager:
         from .visual_encoder import XClipVisualEncoder
         from .vlm import NvidiaCosmosProvider, OpenAIVisionProvider
 
+        manager = self
+
         class Cancelled(RuntimeError):
             pass
 
@@ -331,21 +492,136 @@ class JobManager:
                 raise Cancelled("Cancellation requested")
 
         class Guard:
-            def __init__(self, inner):
+            def __init__(self, inner, component, checkpoint):
                 self.inner = inner
+                self.component = component
+                self.checkpoint = checkpoint
 
             def encode(self, *args):
                 check()
-                return self.inner.encode(*args)
+                first_use = self.component not in job.model_activity
+                if first_use:
+                    manager._model_state(
+                        job,
+                        self.component,
+                        "loading",
+                        f"Loading {self.component} model",
+                        checkpoint=self.checkpoint,
+                        device=settings.device,
+                    )
+                try:
+                    result = self.inner.encode(*args)
+                except Exception as exc:
+                    manager._model_state(
+                        job,
+                        self.component,
+                        "failed",
+                        f"{self.component} model failed",
+                        checkpoint=self.checkpoint,
+                        error_type=type(exc).__name__,
+                        error=manager._safe_message(job, exc),
+                    )
+                    raise
+                if first_use:
+                    manager._model_state(
+                        job,
+                        self.component,
+                        "ready",
+                        f"{self.component} model is ready",
+                        checkpoint=self.checkpoint,
+                        device=settings.device,
+                    )
+                return result
 
         class GuardTranscriber:
             def __init__(self, inner):
                 self.inner = inner
 
-            def transcribe(self, *args):
+            def transcribe(self, *args, **kwargs):
                 check()
                 job.stage = "transcription"
-                return self.inner.transcribe(*args)
+                has_audio = bool(args[1]) if len(args) > 1 else True
+                if not has_audio:
+                    manager._model_state(
+                        job,
+                        "whisper",
+                        "skipped",
+                        "Source has no audio, so Whisper transcription was skipped",
+                    )
+                    return self.inner.transcribe(*args, **kwargs)
+
+                duration = float(job.metadata.get("duration") or 0)
+                last_bucket = -1
+
+                def transcription_progress(processed_seconds: float):
+                    nonlocal last_bucket
+                    if duration <= 0:
+                        return
+                    fraction = max(0.0, min(float(processed_seconds) / duration, 1.0))
+                    # Whisper owns this first long-running phase.  Treat it as
+                    # a visible slice of the overall job rather than leaving
+                    # the UI frozen at "window 0" until it returns.
+                    job.progress = max(job.progress, 0.10 + 0.08 * fraction)
+                    bucket = int(fraction * 20)
+                    if bucket <= last_bucket:
+                        return
+                    last_bucket = bucket
+                    manager._activity(
+                        job,
+                        "transcription",
+                        f"Whisper transcription reached {min(bucket * 5, 100)}% of the source video",
+                        source_seconds=round(min(float(processed_seconds), duration), 1),
+                        duration_seconds=round(duration, 1),
+                        fraction=round(fraction, 3),
+                    )
+
+                manager._model_state(
+                    job,
+                    "whisper",
+                    "loading",
+                    "Loading Whisper and transcribing the full source video",
+                    checkpoint=settings.whisper_model,
+                    device=settings.device,
+                    duration_seconds=duration,
+                )
+                manager._activity(
+                    job,
+                    "transcription",
+                    "Whisper transcribes the full video before window embedding begins",
+                    duration_seconds=duration,
+                    note="Long videos can remain on window 0 while this phase is active.",
+                )
+                try:
+                    result = self.inner.transcribe(
+                        *args, progress_callback=transcription_progress, **kwargs
+                    )
+                except Exception as exc:
+                    manager._model_state(
+                        job,
+                        "whisper",
+                        "failed",
+                        "Whisper transcription failed",
+                        checkpoint=settings.whisper_model,
+                        error_type=type(exc).__name__,
+                        error=manager._safe_message(job, exc),
+                    )
+                    raise
+                check()
+                manager._model_state(
+                    job,
+                    "whisper",
+                    "ready",
+                    "Whisper transcription complete",
+                    checkpoint=settings.whisper_model,
+                    segments=len(result),
+                )
+                manager._activity(
+                    job,
+                    "transcription",
+                    "Transcript is ready; creating searchable video windows next",
+                    transcript_segments=len(result),
+                )
+                return result
 
         class MemoryStore:
             def __init__(self):
@@ -364,19 +640,69 @@ class JobManager:
                 self.index_store = index_store
 
             def ensure_collection(self):
-                self.index_store.ensure_collection()
+                check()
+                manager._activity(
+                    job,
+                    "qdrant",
+                    "Checking Qdrant collection schema",
+                    collection=settings.collection_name,
+                )
+                try:
+                    self.index_store.ensure_collection()
+                except Exception as exc:
+                    manager._activity(
+                        job,
+                        "qdrant",
+                        "Qdrant collection setup failed",
+                        level="error",
+                        error_type=type(exc).__name__,
+                        error=manager._safe_message(job, exc),
+                    )
+                    raise
+                manager._activity(
+                    job,
+                    "qdrant",
+                    "Qdrant collection is ready",
+                    collection=settings.collection_name,
+                )
 
             def existing_window_ids(self, video_id):
                 return self.index_store.existing_window_ids(video_id)
 
             def upsert(self, items):
+                check()
+                manager._activity(
+                    job,
+                    "qdrant",
+                    "Writing a batch of searchable windows to Qdrant",
+                    records=len(items),
+                    first_window_id=items[0][0].window_id if items else None,
+                )
                 self.debug_store.upsert(items)
-                self.index_store.upsert(items)
+                try:
+                    self.index_store.upsert(items)
+                except Exception as exc:
+                    manager._activity(
+                        job,
+                        "qdrant",
+                        "Qdrant batch write failed",
+                        level="error",
+                        records=len(items),
+                        error_type=type(exc).__name__,
+                        error=manager._safe_message(job, exc),
+                    )
+                    raise
 
         class DebugVLM:
             def describe(self, path, window):
                 check()
                 job.stage = "mock_vlm"
+                manager._activity(
+                    job,
+                    "vlm",
+                    "Generating deterministic debug caption",
+                    window_index=window.index,
+                )
                 return VLMDescription(
                     scene_context=f"Deterministic debug context for window {window.index}",
                     confidence=1,
@@ -392,9 +718,17 @@ class JobManager:
         transcriber = GuardTranscriber(
             FasterWhisperTranscriber(settings.whisper_model, settings.device)
         )
-        visual = Guard(XClipVisualEncoder(device=settings.device))
-        audio = Guard(ClapAudioEncoder(device=settings.device))
-        text = Guard(BgeM3TextEncoder(device=settings.device))
+        visual = Guard(
+            XClipVisualEncoder(device=settings.device),
+            "visual",
+            "microsoft/xclip-base-patch32",
+        )
+        audio = Guard(
+            ClapAudioEncoder(device=settings.device),
+            "audio",
+            "laion/clap-htsat-unfused",
+        )
+        text = Guard(BgeM3TextEncoder(device=settings.device), "text", "BAAI/bge-m3")
         run_config = job.runtime_config()
         openai_debug = {}
         cosmos_debug = {}
@@ -407,14 +741,51 @@ class JobManager:
                 settings.openai_vlm_image_detail,
                 int(run_config.get("openai_max_frames", settings.openai_vlm_max_frames)),
             )
+            self._model_state(
+                job,
+                "vlm",
+                "not_attempted",
+                "OpenAI VLM is configured and will be called only for selected windows",
+                provider="openai",
+                model=run_config.get("openai_model") or settings.openai_vlm_model,
+            )
 
             class OpenAIGuard:
                 def describe(self, *args):
                     check()
                     job.stage = "openai_vlm"
                     window = args[1]
+                    manager._model_state(
+                        job,
+                        "vlm",
+                        "loading",
+                        "Calling the OpenAI VLM for a selected window",
+                        provider="openai",
+                        window_index=window.index,
+                    )
                     try:
-                        return inner.describe(*args)
+                        result = inner.describe(*args)
+                        manager._model_state(
+                            job,
+                            "vlm",
+                            "ready",
+                            "OpenAI VLM response received",
+                            provider="openai",
+                            window_index=window.index,
+                        )
+                        return result
+                    except Exception as exc:
+                        manager._model_state(
+                            job,
+                            "vlm",
+                            "failed",
+                            "OpenAI VLM request failed",
+                            provider="openai",
+                            window_index=window.index,
+                            error_type=type(exc).__name__,
+                            error=manager._safe_message(job, exc),
+                        )
+                        raise
                     finally:
                         openai_debug[window.index] = {
                             "request": inner.last_sanitized_request,
@@ -432,14 +803,51 @@ class JobManager:
                 settings.openai_vlm_retries,
                 int(run_config.get("cosmos_max_frames", 8)),
             )
+            self._model_state(
+                job,
+                "vlm",
+                "not_attempted",
+                "NVIDIA Cosmos is configured and will be called only for selected windows",
+                provider="cosmos",
+                model=run_config.get("cosmos_model", "nvidia/cosmos3-nano-reasoner"),
+            )
 
             class CosmosGuard:
                 def describe(self, *args):
                     check()
                     job.stage = "cosmos_vlm"
                     window = args[1]
+                    manager._model_state(
+                        job,
+                        "vlm",
+                        "loading",
+                        "Calling NVIDIA Cosmos for a selected window",
+                        provider="cosmos",
+                        window_index=window.index,
+                    )
                     try:
-                        return inner.describe(*args)
+                        result = inner.describe(*args)
+                        manager._model_state(
+                            job,
+                            "vlm",
+                            "ready",
+                            "NVIDIA Cosmos response received",
+                            provider="cosmos",
+                            window_index=window.index,
+                        )
+                        return result
+                    except Exception as exc:
+                        manager._model_state(
+                            job,
+                            "vlm",
+                            "failed",
+                            "NVIDIA Cosmos request failed",
+                            provider="cosmos",
+                            window_index=window.index,
+                            error_type=type(exc).__name__,
+                            error=manager._safe_message(job, exc),
+                        )
+                        raise
                     finally:
                         cosmos_debug[window.index] = {
                             "request": inner.last_sanitized_request,
@@ -450,14 +858,35 @@ class JobManager:
 
             vlm = CosmosGuard()
         elif mode == "mock":
+            self._model_state(
+                job,
+                "vlm",
+                "ready",
+                "Deterministic debug VLM is ready",
+                provider="mock",
+            )
             vlm = DebugVLM()
         else:
+            self._model_state(
+                job,
+                "vlm",
+                "ready",
+                "VLM calls are intentionally skipped in selection-only mode",
+                provider="selection_only",
+            )
             vlm = SelectionVLM()
         memory = MemoryStore()
         store = memory
         if run_config.get("index_qdrant"):
             from qdrant_client import QdrantClient
 
+            self._activity(
+                job,
+                "qdrant",
+                "Connecting to Qdrant for persistent indexing",
+                collection=settings.collection_name,
+                timeout_seconds=settings.qdrant_timeout_seconds,
+            )
             index_store = QdrantStore(
                 QdrantClient(
                     url=settings.qdrant_url,
@@ -468,13 +897,52 @@ class JobManager:
                 settings.batch_size,
             )
             store = TeeStore(memory, index_store)
+        else:
+            self._activity(
+                job,
+                "qdrant",
+                "Qdrant indexing is disabled; results will remain in this job only",
+                level="warning",
+            )
+
+        last_progress = {"stage": None, "bucket": -1}
+
         def progress(stage, fraction, current_window, total_windows):
             job.stage = stage
             job.progress = max(job.progress, min(float(fraction), 1.0))
             job.current_window = int(current_window)
             job.total_windows = int(total_windows)
+            if stage != last_progress["stage"]:
+                last_progress["stage"] = stage
+                last_progress["bucket"] = -1
+                manager._activity(
+                    job,
+                    "pipeline",
+                    f"Started pipeline stage: {stage.replace('_', ' ')}",
+                    stage=stage,
+                    overall_progress=round(job.progress, 3),
+                    current_window=job.current_window,
+                    total_windows=job.total_windows,
+                )
+                return
+            if job.total_windows <= 0:
+                return
+            bucket = int(20 * job.current_window / job.total_windows)
+            if bucket <= last_progress["bucket"]:
+                return
+            last_progress["bucket"] = bucket
+            manager._activity(
+                job,
+                "pipeline",
+                f"{stage.replace('_', ' ')} progress: {min(bucket * 5, 100)}%",
+                stage=stage,
+                current_window=job.current_window,
+                total_windows=job.total_windows,
+                overall_progress=round(job.progress, 3),
+            )
 
         job.stage = "model_processing"
+        self._activity(job, "pipeline", "Preparing the local indexing pipeline")
         report = ProcessingPipeline(
             transcriber,
             visual,
@@ -485,6 +953,15 @@ class JobManager:
             settings,
             progress_callback=progress,
         ).process_video(job.video_path)
+        self._activity(
+            job,
+            "pipeline",
+            "Pipeline computation finished; preparing browser inspection data",
+            total_windows=report.total_windows,
+            selected_vlm_windows=report.selected_vlm_windows,
+            indexed_windows=report.successfully_indexed_windows,
+            failed_windows=report.failed_windows,
+        )
         records = memory.records
         job.total_windows = report.total_windows
         qdrant_errors = {
@@ -614,6 +1091,9 @@ class JobManager:
         )
         (exports / "redacted_configuration.json").write_text(
             json.dumps(sanitize(job.config), indent=2), encoding="utf-8"
+        )
+        (exports / "activity.json").write_text(
+            json.dumps(sanitize(job.activity), indent=2), encoding="utf-8"
         )
         output = io.StringIO()
         writer = csv.DictWriter(

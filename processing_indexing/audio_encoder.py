@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Protocol
+
+from .model_cache import model_load_kwargs
 from .models import VideoWindow
 
 SILENT_AUDIO_VECTOR = [0.0] * 512
@@ -39,12 +41,19 @@ class ClapAudioEncoder:
         if audio.size == 0 or float(np.max(np.abs(audio))) < 1e-8:
             return SILENT_AUDIO_VECTOR.copy()
         if self._model is None:
-            from transformers import ClapAudioModelWithProjection, AutoProcessor
+            from transformers import AutoProcessor, ClapAudioModelWithProjection
 
-            self._processor = AutoProcessor.from_pretrained(self.model_name)
+            load_kwargs = model_load_kwargs(self.model_name)
+            self._processor = AutoProcessor.from_pretrained(
+                self.model_name, **load_kwargs
+            )
             self._model = (
                 ClapAudioModelWithProjection.from_pretrained(
-                    self.model_name, use_safetensors=True
+                    # The cached CLAP revision ships ``pytorch_model.bin``.
+                    # Leaving the format automatic lets Transformers use that
+                    # valid local file instead of reaching the Hub for a
+                    # Safetensors revision that is not cached.
+                    self.model_name, **load_kwargs
                 )
                 .to(self.device)
                 .eval()

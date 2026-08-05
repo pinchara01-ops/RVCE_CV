@@ -23,6 +23,17 @@ function Test-LocalUrl {
     }
 }
 
+function Test-LocalPort {
+    param([Parameter(Mandatory)][int]$Port)
+
+    try {
+        return $null -ne (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -First 1)
+    }
+    catch {
+        return $false
+    }
+}
+
 function ConvertTo-EncodedPowerShell {
     param([Parameter(Mandatory)][string]$Script)
 
@@ -92,7 +103,17 @@ if ($Setup) {
     }
 }
 
-& docker compose up -d qdrant
+if (-not (Test-LocalUrl "http://127.0.0.1:6333/healthz")) {
+    if (Test-LocalPort 6333) {
+        Write-Warning "Qdrant is already listening on port 6333, but its health probe is slow. Skipping Docker startup."
+    }
+    else {
+        & docker compose up -d qdrant
+    }
+}
+else {
+    Write-Host "Qdrant is already running."
+}
 
 if (-not (Test-LocalUrl "http://127.0.0.1:8000/api/index/health")) {
     $EscapedRoot = $Root.Replace("'", "''")

@@ -161,6 +161,14 @@ def events(job_id: str):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+@app.get("/api/processing/jobs/{job_id}/activity")
+def activity(job_id: str, limit: int = 400):
+    """Return the browser-safe diagnostic timeline without a full job payload."""
+    job = job_or_404(job_id)
+    bounded_limit = max(1, min(limit, 400))
+    return {"activity": sanitize(job.activity[-bounded_limit:])}
+
+
 @app.get("/api/processing/jobs/{job_id}/windows")
 def windows(job_id: str):
     return {"windows": job_or_404(job_id).windows}
@@ -207,6 +215,7 @@ def export(job_id: str, export_type: str):
         "vlm": "vlm_outputs.json",
         "errors": "errors.json",
         "config": "redacted_configuration.json",
+        "activity": "activity.json",
         "evaluation": "../evaluation.json",
     }
     if export_type not in allowed:
