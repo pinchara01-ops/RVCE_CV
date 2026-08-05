@@ -1,6 +1,6 @@
 """External API contract (FastAPI). Wired to real Qdrant search functions,
-the real query router (Phase 2), real query encoders (Phase 3), weighted
-RRF fusion (Phase 4), and window merging (Phase 5).
+the query router (Phase 2), real query encoders (Phase 3), weighted RRF
+fusion (Phase 4), and window merging (Phase 5).
 """
 import logging
 
@@ -58,7 +58,7 @@ def search(request: SearchRequest) -> SearchResponse:
     merged into single regions (Phase 5). Per-modality search depth is
     config.DEFAULT_TOP_K (a fixed candidate pool) - fusion is left
     untruncated so merging sees every candidate before anything is dropped;
-    request.top_k is applied only at the very end, to the merged regions.
+    request.top_k is applied last, to the final merged regions.
     """
     query_weights = classify_query(request.query)
     query_vectors = encoders.encode_query(request.query, query_weights)
