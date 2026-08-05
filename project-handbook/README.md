@@ -19,13 +19,13 @@ and first use.
 
 The documents distinguish three states deliberately:
 
-- **Implemented** ? behavior represented in the current source tree. Relevant
+- **Implemented** — behavior represented in the current source tree. Relevant
   automated and manual evidence is identified in the acceptance material; a
   selectable provider is not thereby claimed to have a live account validation.
-- **Selectable** ? a model or provider presented in the UI or runtime profile;
+- **Selectable** — a model or provider presented in the UI or runtime profile;
   selecting it may still require a local model download, a compatible device,
   a valid API key, or provider quota.
-- **Proposed scale-up** ? an operational next step, not a claim that the
+- **Proposed scale-up** — an operational next step, not a claim that the
   current local development setup already operates at that scale.
 
 The distinction prevents an architectural diagram from overstating validation
@@ -38,9 +38,9 @@ work separate:
 
 ```text
 project-handbook/
-??? design/       # Why the system is shaped this way and how data moves
-??? reference/    # Stable contracts: providers, tools, configuration, schemas
-??? delivery/     # How the system is built, tested, and accepted
+├── design/       # Why the system is shaped this way and how data moves
+├── reference/    # Stable contracts: providers, tools, configuration, schemas
+└── delivery/     # How the system is built, tested, and accepted
 ```
 
 This makes it possible to answer a conceptual question without wading through
