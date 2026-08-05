@@ -3,13 +3,18 @@ python-dotenv>=1.0,<2
 qdrant-client>=1.11,<1.12
 httpx>=0.27,<1
 openai>=1.68,<3
+google-genai>=1.0,<2
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
 python-multipart>=0.0.9,<1
 faster-whisper>=1.0,<2
 hf-xet>=1.0,<2
-transformers>=4.45,<5
+# Qwen3-VL-Reranker-2B's documented local runtime needs the current
+# multimodal processors.  The model stays lazy and downloads only when the
+# user enables the on-demand local reranker.
+transformers>=4.57,<5
 sentence-transformers>=3.0,<4
+qwen-vl-utils>=0.0.14,<1
 torch>=2.6,<3
 opencv-python-headless>=4.9,<5
 pillow>=10,<12

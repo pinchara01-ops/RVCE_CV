@@ -222,6 +222,35 @@ def test_inner_pipeline_failure_is_not_reported_as_complete(tmp_path, monkeypatc
     )
 
 
+def test_local_qwen_caption_mode_is_accepted_without_eager_model_loading(tmp_path, monkeypatch):
+    manager = JobManager(tmp_path)
+    path = tmp_path / "j" / "video.mp4"
+    path.parent.mkdir()
+    path.write_bytes(b"x")
+    job = Job(
+        "j",
+        path.parent,
+        path,
+        {
+            "vlm_mode": "local_qwen",
+            "local_qwen_model": "Qwen/Qwen2.5-VL-7B-Instruct",
+        },
+        {},
+    )
+    manager.jobs[job.id] = job
+    seen = {}
+
+    def finish(inner_job, _settings, mode):
+        seen["mode"] = mode
+        inner_job.report = {"status": "complete", "errors": {}}
+
+    monkeypatch.setattr(manager, "_execute_pipeline", finish)
+    manager._run(job)
+
+    assert seen["mode"] == "local_qwen"
+    assert job.status == "complete"
+
+
 @pytest.mark.parametrize(
     "pipeline_status,expected_status,expected_event",
     [

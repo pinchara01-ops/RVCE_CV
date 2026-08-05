@@ -138,7 +138,7 @@ ENABLE_VERIFICATION: bool = _bool("ENABLE_VERIFICATION", False)
 VERIFICATION_TIMEOUT_SECONDS: float = float(os.getenv("VERIFICATION_TIMEOUT_SECONDS", "2.0"))
 # Only the top-N candidates by fused_score get verified - cost control,
 # verification is O(candidates) LLM calls, not O(1).
-VERIFICATION_TOP_N: int = _int("VERIFICATION_TOP_N", 5)
+VERIFICATION_TOP_N: int = _int("VERIFICATION_TOP_N", 7)
 
 # Captions copied from a nearby selected window are useful context but are
 # not evidence that the skipped window itself contains the described action.

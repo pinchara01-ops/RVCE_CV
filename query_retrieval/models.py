@@ -57,11 +57,20 @@ class VerificationOptions(BaseModel):
     response, or log record.
     """
 
-    provider: Literal["none", "openai", "cosmos"] = "none"
+    provider: Literal["none", "gemini", "openai", "cosmos"] = "none"
     api_key: str | None = Field(default=None, exclude=True, repr=False, max_length=4096)
     model: str | None = Field(default=None, max_length=256)
     max_frames: int = Field(default=8, ge=2, le=16)
-    top_n: int = Field(default=3, ge=1, le=10)
+    # Seven is a deliberately bounded demo default: retrieval stays cheap,
+    # while a VLM gets enough plausible regions to recover from a false
+    # positive at rank one.
+    top_n: int = Field(default=7, ge=1, le=10)
+    # A verified 10–60 second merged region is still too broad to present as
+    # the final answer.  The second pass samples time bins within it and asks
+    # the *same* selected VLM for a short, evidence-backed span.
+    enable_temporal_localization: bool = True
+    temporal_target_seconds: float = Field(default=5.0, ge=2.0, le=5.0)
+    temporal_max_frames: int = Field(default=12, ge=4, le=24)
 
     @property
     def enabled(self) -> bool:
@@ -100,6 +109,15 @@ class VerificationResult(BaseModel):
     event_start_relative: float | None = None
     event_end_relative: float | None = None
     frame_timestamps: list[float] = Field(default_factory=list)
+    # These fields make the two stages observable without exposing source
+    # paths, credentials, or raw frames to the browser.  The final event
+    # interval above is replaced only after a successful dense pass.
+    localization_state: Literal[
+        "not_attempted", "not_needed", "localized", "localization_unavailable"
+    ] = "not_attempted"
+    localization_reason: str = ""
+    localization_evidence: str = ""
+    localization_frame_timestamps: list[float] = Field(default_factory=list)
 
 
 class SearchRequest(BaseModel):
@@ -109,6 +127,25 @@ class SearchRequest(BaseModel):
     # already-implemented decomposition flow for a demo without mutating
     # process-wide environment flags.
     enable_decomposition: bool | None = None
+    # API-based collections require the opaque, backend-memory runtime
+    # session that owns their Qdrant credentials and provider configuration.
+    # It is not an API key and is never echoed by SearchResponse.
+    profile_id: str | None = Field(default=None, max_length=128)
+    runtime_session_id: str | None = Field(default=None, max_length=512)
+    # The cross-encoder sees only the fused candidate set, never the full
+    # vector database.  Disabled callers retain the historic RRF-only route.
+    enable_reranking: bool = True
+    rerank_top_n: int = Field(default=20, ge=1, le=100)
+    # Local Qwen reranking is deliberately opt-in.  ``none`` means no local
+    # cross-encoder is loaded or downloaded merely because a search opened.
+    # API-based runs may instead select this through their private runtime
+    # session; public request values cannot supply provider credentials.
+    reranker_provider: Literal["none", "local_qwen"] = "none"
+    reranker_model: str | None = Field(default=None, max_length=256)
+    # Optional labels for a controlled evaluation run.  Live searches leave
+    # this unset, so quality metrics remain explicitly "not evaluated" rather
+    # than fabricated from retrieval scores.
+    relevant_window_ids: list[str] | None = Field(default=None, max_length=10_000)
     verification: VerificationOptions = Field(default_factory=VerificationOptions)
 
 
@@ -129,6 +166,10 @@ class SearchResultItem(BaseModel):
     source_window_ids: list[str] = Field(default_factory=list)
     state: Literal["retrieved", "verified", "rejected", "verification_unavailable"] = "retrieved"
     verification: VerificationResult | None = None
+    # In the API-based profile this is *only* the fresh bounded
+    # cross-encoder relevance score.  It is never an RRF/vector score mixed
+    # with a VLM verification confidence.  The historical self-hosted route
+    # retains its legacy verification-aware meaning for compatibility.
     final_score: float | None = None
     refined_start: float | None = None
     refined_end: float | None = None
@@ -137,6 +178,9 @@ class SearchResultItem(BaseModel):
 class SearchResponse(BaseModel):
     results: list[SearchResultItem]
     decomposition: DecompositionResult | None = None
+    # Timing/count diagnostics are public only when they contain no source
+    # paths, raw vectors, provider credentials, or model responses.
+    diagnostics: dict[str, object] = Field(default_factory=dict)
 
 
 class FusedHit(BaseModel):

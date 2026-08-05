@@ -23,7 +23,7 @@ class Settings:
     device: str = "cpu"
     batch_size: int = 8
     whisper_model: str = "small"
-    vlm_model: str = "Qwen/Qwen2.5-VL-7B-Instruct"
+    vlm_model: str = "Qwen/Qwen2.5-VL-3B-Instruct"
     vlm_provider: str = "local"
     vlm_base_url: str | None = None
     vlm_api_key: str | None = field(default=None, repr=False)
@@ -96,7 +96,7 @@ class Settings:
             device=os.getenv("DEVICE", "cpu"),
             batch_size=int(os.getenv("BATCH_SIZE", "8")),
             whisper_model=os.getenv("WHISPER_MODEL", "small"),
-            vlm_model=os.getenv("VLM_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct"),
+            vlm_model=os.getenv("VLM_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct"),
             vlm_provider=os.getenv("VLM_PROVIDER", "local"),
             vlm_base_url=os.getenv("VLM_BASE_URL"),
             vlm_api_key=os.getenv("VLM_API_KEY"),

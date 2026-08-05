@@ -11,6 +11,7 @@ import os
 import time
 from collections import defaultdict
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 from qdrant_client import QdrantClient
@@ -66,7 +67,10 @@ def _safe_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
     return data
 
 
-def _collection_health_once(settings: Settings) -> dict[str, Any]:
+def _collection_health_once(
+    settings: Settings,
+    expected_vector_dims: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
     client = _health_client(settings)
     if not client.collection_exists(settings.collection_name):
         return {
@@ -99,8 +103,9 @@ def _collection_health_once(settings: Settings) -> dict[str, Any]:
         }
         for name, value in vectors.items()
     }
+    expected = dict(expected_vector_dims or VECTOR_DIMS)
     schema_errors = []
-    for name, dimensions in VECTOR_DIMS.items():
+    for name, dimensions in expected.items():
         value = vectors.get(name)
         if value is None:
             schema_errors.append(f"Missing required '{name}' vector.")
@@ -109,7 +114,7 @@ def _collection_health_once(settings: Settings) -> dict[str, Any]:
                 f"'{name}' has {value.size} dimensions; expected {dimensions}."
             )
     for name in vectors:
-        if name not in VECTOR_DIMS:
+        if name not in expected:
             schema_errors.append(f"Unexpected '{name}' vector in the collection.")
     return {
         "reachable": True,
@@ -122,7 +127,11 @@ def _collection_health_once(settings: Settings) -> dict[str, Any]:
     }
 
 
-def collection_health(settings: Settings | None = None) -> dict[str, Any]:
+def collection_health(
+    settings: Settings | None = None,
+    *,
+    expected_vector_dims: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
     """Return collection diagnostics, tolerating brief local-Qdrant stalls.
 
     The health check is read-only and powers a visible UI badge. Retrying it
@@ -133,7 +142,7 @@ def collection_health(settings: Settings | None = None) -> dict[str, Any]:
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            return _collection_health_once(settings)
+            return _collection_health_once(settings, expected_vector_dims)
         except Exception as exc:  # noqa: BLE001 - surface diagnostics in the UI
             last_error = exc
             if attempt < 2:
@@ -240,6 +249,14 @@ def list_videos(settings: Settings | None = None, limit: int = 500) -> list[dict
             "media_available": any(bool(row.get("media_available")) for row in rows),
             "direct_captions": sum(bool(row.get("caption_direct")) for row in rows),
             "caption_available": sum(bool(row.get("caption_available")) for row in rows),
+            "embedding_profile": next(
+                (
+                    str(row.get("embedding_profile"))
+                    for row in rows
+                    if row.get("embedding_profile")
+                ),
+                "self-hosted-v1",
+            ),
         }
         for video_id, rows in sorted(groups.items())
     ]
