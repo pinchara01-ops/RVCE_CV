@@ -29,6 +29,10 @@ QDRANT_PORT: int = _int("QDRANT_PORT", 6333)
 # compatible fallback for existing local .env files, but prefer the shared URL.
 QDRANT_URL: str = os.getenv("QDRANT_URL", f"http://{QDRANT_HOST}:{QDRANT_PORT}")
 QDRANT_API_KEY: str | None = os.getenv("QDRANT_API_KEY")
+# A local Qdrant process can become unavailable (for example while Docker is
+# restarting). Bound every request so the browser gets a clear 503 instead of
+# an indefinitely spinning search button.
+QDRANT_TIMEOUT_SECONDS: float = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "10"))
 
 # Collection
 COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "video_windows")
@@ -56,6 +60,13 @@ DEFAULT_TOP_K: int = _int("DEFAULT_TOP_K", 15)
 
 # --- Query encoders (Phase 3) ---
 DEVICE: str = os.getenv("DEVICE", "cpu")
+
+# Keeping X-CLIP, CLAP, and BGE-M3 resident together can exhaust an 8 GB
+# demo laptop once Docker/Qdrant is running.  The local launcher enables this
+# mode: encode with one model at a time, evict it, then retrieve.  Larger
+# deployments can set it to false to trade memory for lower repeat-query
+# latency.
+QUERY_LOW_MEMORY_MODE: bool = _bool("QUERY_LOW_MEMORY_MODE", False)
 
 # visual: X-CLIP text tower, 512-dim (matches VECTOR_CONFIG["visual"]["dim"])
 XCLIP_MODEL_NAME: str = os.getenv("XCLIP_MODEL_NAME", "microsoft/xclip-base-patch32")

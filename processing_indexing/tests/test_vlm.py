@@ -5,6 +5,8 @@ from processing_indexing.models import ActionTiming, VideoWindow
 from processing_indexing.models import VLMDescription
 from processing_indexing.vlm import (
     HostedQwenProvider,
+    NVIDIA_COSMOS_CHAT_COMPLETIONS_URL,
+    NvidiaCosmosProvider,
     OpenAIVisionProvider,
     RetryingVLMProvider,
     VLMError,
@@ -73,6 +75,156 @@ def test_hosted_provider_uses_configured_endpoint_key_model_and_validates_json()
 def test_hosted_provider_requires_endpoint_and_environment_key(base_url, api_key):
     with pytest.raises(ValueError):
         HostedQwenProvider(base_url, api_key, "qwen-vl")
+
+
+class CosmosResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        if isinstance(self.payload, Exception):
+            raise self.payload
+
+    def json(self):
+        return self.payload
+
+
+class CosmosClient:
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+        self.calls = []
+
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return CosmosResponse(self.payloads.pop(0))
+
+
+class CosmosHTTPStatusError(RuntimeError):
+    def __init__(self, status_code):
+        self.response = type("Response", (), {"status_code": status_code})()
+        super().__init__(f"HTTP {status_code}")
+
+
+def test_cosmos_provider_uses_temporal_frames_json_schema_and_sanitized_diagnostics():
+    client = CosmosClient(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"scene_context":"road","confidence":0.9}'
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 12,
+                    "completion_tokens": 3,
+                    "total_tokens": 15,
+                },
+            }
+        ]
+    )
+    provider = NvidiaCosmosProvider(
+        "nvidia-secret", retries=0, max_frames=2, client=client
+    )
+    provider._encode_frames = lambda *_: [(0.0, "data:first"), (0.5, "data:second")]
+
+    result = provider.describe(None, WINDOW)
+
+    url, request = client.calls[0]
+    body = request["json"]
+    content = body["messages"][0]["content"]
+    assert url == NVIDIA_COSMOS_CHAT_COMPLETIONS_URL
+    assert request["headers"]["Authorization"] == "Bearer nvidia-secret"
+    assert content[0] == {
+        "type": "video_frames",
+        "video_frames": ["data:first", "data:second"],
+    }
+    assert content[1]["type"] == "text"
+    assert body["response_format"]["type"] == "json_schema"
+    assert body["response_format"]["json_schema"]["name"] == "VLMDescription"
+    assert provider.last_sanitized_request["frame_timestamps"] == [0.0, 0.5]
+    assert provider.last_sanitized_request["frame_count"] == 2
+    assert provider.last_usage["input_tokens"] == 12
+    assert provider.last_usage["output_tokens"] == 3
+    assert "nvidia-secret" not in str(provider.last_sanitized_request)
+    assert "nvidia-secret" not in str(provider.last_sanitized_response)
+    assert "nvidia-secret" not in str(provider.attempts)
+    assert result.scene_context == "road"
+
+
+def test_cosmos_provider_retries_truncated_json_and_normalizes_timing():
+    client = CosmosClient(
+        [
+            {"choices": [{"message": {"content": '{"scene_context":"unfinished'}}]},
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"action_timing":[{"action":"turn",'
+                                '"start_seconds":-1,"end_seconds":3}],'
+                                '"confidence":0.8}'
+                            )
+                        }
+                    }
+                ]
+            },
+        ]
+    )
+    provider = NvidiaCosmosProvider("nvidia-secret", retries=1, client=client)
+    provider._encode_frames = lambda *_: []
+
+    result = provider.describe(None, WINDOW)
+
+    assert len(client.calls) == 2
+    assert [attempt["status"] for attempt in provider.attempts] == [
+        "failed",
+        "succeeded",
+    ]
+    assert provider.attempts[0]["failure_category"] == "truncated_json"
+    assert (
+        result.action_timing[0].start_seconds,
+        result.action_timing[0].end_seconds,
+    ) == (0, 1)
+    assert provider.last_sanitized_response["timing_diagnostics"][0]["status"] == (
+        "normalized"
+    )
+
+
+def test_cosmos_provider_retries_transient_http_statuses():
+    client = CosmosClient(
+        [
+            CosmosHTTPStatusError(429),
+            {"choices": [{"message": {"content": '{"confidence":0.8}'}}]},
+        ]
+    )
+    provider = NvidiaCosmosProvider("nvidia-secret", retries=1, client=client)
+    provider._encode_frames = lambda *_: []
+
+    assert provider.describe(None, WINDOW).confidence == 0.8
+    assert [attempt["failure_category"] for attempt in provider.attempts] == [
+        "transport",
+        None,
+    ]
+
+
+def test_cosmos_provider_does_not_retry_refusals_or_accept_invalid_settings():
+    with pytest.raises(ValueError):
+        NvidiaCosmosProvider(None)
+    with pytest.raises(ValueError):
+        NvidiaCosmosProvider("nvidia-secret", max_frames=0)
+
+    client = CosmosClient(
+        [{"choices": [{"message": {"refusal": "cannot comply", "content": None}}]}]
+    )
+    provider = NvidiaCosmosProvider("nvidia-secret", retries=2, client=client)
+    provider._encode_frames = lambda *_: []
+
+    with pytest.raises(VLMError, match="refused"):
+        provider.describe(None, WINDOW)
+    assert len(client.calls) == 1
+    assert provider.attempts[0]["failure_category"] == "refusal"
 
 
 class ParsedResponses:

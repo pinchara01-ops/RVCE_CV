@@ -151,15 +151,19 @@ def _live_decompose(query: str) -> DecompositionResult:
     return _validate_and_build(parsed, query)
 
 
-def decompose_query(query: str) -> DecompositionResult:
+def decompose_query(query: str, *, enabled: bool | None = None) -> DecompositionResult:
     """Decompose `query` via the three-tier ladder. Never raises, never
     blocks longer than DECOMPOSITION_TIMEOUT_SECONDS."""
+    # A request-level override lets the UI turn the feature on for a demo
+    # without changing a process-wide environment variable.  ``None`` keeps
+    # the existing server-configured behaviour.
+    is_enabled = config.ENABLE_QUERY_DECOMPOSITION if enabled is None else enabled
     cache = _load_cache()
     if query in cache:
         logger.info("Decomposition tier=cache query=%r", query)
         return DecompositionResult(**{**cache[query], "tier": "cache"})
 
-    if not config.ENABLE_QUERY_DECOMPOSITION:
+    if not is_enabled:
         logger.info("Decomposition tier=fallback query=%r reason=disabled", query)
         return _fallback_result(query)
 

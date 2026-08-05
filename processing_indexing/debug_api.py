@@ -1,18 +1,26 @@
 from __future__ import annotations
 import json
+import logging
 import mimetypes
 import re
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from .debug_jobs import JobManager, sanitize
 from .preflight import model_statuses
 from .config import Settings
 from .library import collection_health, get_window, list_videos, list_windows, media_path_for_window
+from .probe import VideoProbeError
 from query_retrieval import api as query_api
 from query_retrieval.models import SearchRequest, SearchResponse, VerifyRequest, VerifyResponse
 
 app = FastAPI(title="Processing Debug API")
+logger = logging.getLogger(__name__)
+MULTIPART_PARSE_ERROR = "There was an error parsing the body"
+MULTIPART_RECOVERY_MESSAGE = (
+    "The upload could not be read. Re-select the video and retry, keeping this page open until the upload completes."
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -29,6 +37,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 manager = JobManager()
+
+
+@app.exception_handler(StarletteHTTPException)
+async def friendly_upload_parse_error(request: Request, exc: StarletteHTTPException):
+    """Make FastAPI's opaque pre-endpoint multipart error actionable.
+
+    File/Form parameters are parsed before ``create_job`` is invoked, so this
+    narrow handler is the only place to recover from a malformed or interrupted
+    upload without changing unrelated API errors.
+    """
+    if (
+        request.url.path == "/api/processing/jobs"
+        and exc.status_code == 400
+        and exc.detail == MULTIPART_PARSE_ERROR
+    ):
+        cause = type(exc.__cause__).__name__ if exc.__cause__ else "unknown"
+        logger.warning("Processing upload multipart parse failed (cause=%s)", cause)
+        return JSONResponse(status_code=400, content={"detail": MULTIPART_RECOVERY_MESSAGE})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers,
+    )
 
 
 def media_response(path, request: Request):
@@ -83,7 +114,7 @@ async def create_job(video: UploadFile = File(...), configuration: str = Form("{
         data = await video.read()
         job = manager.create(video.filename or "", data, config)
         return job.public()
-    except (ValueError, json.JSONDecodeError) as exc:
+    except (ValueError, VideoProbeError, json.JSONDecodeError) as exc:
         raise HTTPException(400, str(exc))
 
 

@@ -43,7 +43,11 @@ def main():
             device=args.device,
             batch_size=args.batch_size,
         )
-        client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
+        client = QdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key,
+            timeout=settings.qdrant_timeout_seconds,
+        )
         if settings.vlm_provider == "local":
             vlm = LocalQwenProvider(
                 model_name=settings.vlm_model,

@@ -14,6 +14,7 @@ from processing_indexing.debug_jobs import (
     summarize_openai_usage,
 )
 from processing_indexing.preflight import model_statuses
+from processing_indexing.probe import VideoProbeError
 
 
 def test_preflight_reports_exact_checkpoints_without_loading(monkeypatch, tmp_path):
@@ -39,6 +40,75 @@ def test_preflight_identifies_mock_and_real_provider():
         ].provider_kind
         == "real"
     )
+    cosmos = model_statuses(Settings(), "cosmos")[-1]
+    assert cosmos.device == "hosted"
+    assert cosmos.checkpoint == "nvidia/cosmos3-nano-reasoner"
+
+
+def test_qdrant_timeout_must_be_positive():
+    with pytest.raises(ValueError, match="QDRANT_TIMEOUT_SECONDS"):
+        Settings(qdrant_timeout_seconds=0)
+
+
+def test_collection_health_retries_a_transient_qdrant_timeout(monkeypatch):
+    from processing_indexing import library
+
+    attempts = 0
+
+    class FlakyClient:
+        def collection_exists(self, _collection_name):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TimeoutError("timed out")
+            return False
+
+    monkeypatch.setattr(library, "_health_client", lambda _settings: FlakyClient())
+    monkeypatch.setattr(library.time, "sleep", lambda _seconds: None)
+
+    health = library.collection_health(Settings())
+
+    assert attempts == 2
+    assert health["reachable"] is True
+    assert health["collection_exists"] is False
+
+
+def test_malformed_upload_has_an_actionable_recovery_message():
+    from processing_indexing import debug_api
+
+    malformed_body = (
+        b'--diag-boundary\r\n'
+        b'Content-Disposition: form-data; name="video"; filename="clip.mp4"\n\n'
+        b'x\r\n--diag-boundary--\r\n'
+    )
+    response = TestClient(debug_api.app, raise_server_exceptions=False).post(
+        "/api/processing/jobs",
+        content=malformed_body,
+        headers={"Content-Type": "multipart/form-data; boundary=diag-boundary"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": debug_api.MULTIPART_RECOVERY_MESSAGE}
+
+
+def test_unreadable_uploaded_video_returns_400(tmp_path, monkeypatch):
+    from processing_indexing import debug_api
+
+    manager = JobManager(tmp_path)
+
+    def unreadable(*_args, **_kwargs):
+        raise VideoProbeError("Video has no video stream")
+
+    monkeypatch.setattr(manager, "create", unreadable)
+    monkeypatch.setattr(debug_api, "manager", manager)
+
+    response = TestClient(debug_api.app).post(
+        "/api/processing/jobs",
+        files={"video": ("clip.mp4", b"not-a-video", "video/mp4")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Video has no video stream"
 
 
 def test_cache_invalidation_rules():
@@ -70,6 +140,22 @@ def test_secret_redaction_is_recursive():
         {"OPENAI_API_KEY": "secret", "nested": {"authorization": "Bearer secret"}}
     )
     assert "secret" not in json.dumps(value)
+
+
+def test_runtime_provider_key_is_private_but_available_to_active_job(tmp_path):
+    path = tmp_path / "video.mp4"
+    path.write_bytes(b"x")
+    job = Job(
+        "job",
+        tmp_path,
+        path,
+        {"vlm_mode": "cosmos", "nvidia_api_key": "[REDACTED]"},
+        {},
+        private_config={"vlm_mode": "cosmos", "nvidia_api_key": "real-secret"},
+    )
+
+    assert job.runtime_config()["nvidia_api_key"] == "real-secret"
+    assert "real-secret" not in json.dumps(job.public())
 
 
 @pytest.mark.parametrize("name", ["../video.mp4", "folder/video.mp4", "video.exe"])

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,20 @@ from .models import VECTOR_DIMS
 
 
 def _client(settings: Settings) -> QdrantClient:
-    return QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
+    return QdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key,
+        timeout=settings.qdrant_timeout_seconds,
+    )
+
+
+def _health_client(settings: Settings) -> QdrantClient:
+    """Use a short timeout for the UI health probe, which is safe to retry."""
+    return QdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key,
+        timeout=min(settings.qdrant_timeout_seconds, 2.0),
+    )
 
 
 def _summary(vector: list[float]) -> dict[str, Any]:
@@ -52,73 +66,88 @@ def _safe_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
     return data
 
 
-def collection_health(settings: Settings | None = None) -> dict[str, Any]:
-    settings = settings or Settings.from_env()
-    try:
-        client = _client(settings)
-        if not client.collection_exists(settings.collection_name):
-            return {
-                "reachable": True,
-                "collection_exists": False,
-                "collection_name": settings.collection_name,
-                "points_count": 0,
-                "vectors": {},
-                "schema_valid": True,
-                "schema_errors": [],
+def _collection_health_once(settings: Settings) -> dict[str, Any]:
+    client = _health_client(settings)
+    if not client.collection_exists(settings.collection_name):
+        return {
+            "reachable": True,
+            "collection_exists": False,
+            "collection_name": settings.collection_name,
+            "points_count": 0,
+            "vectors": {},
+            "schema_valid": True,
+            "schema_errors": [],
         }
-        info = client.get_collection(settings.collection_name)
-        vectors = info.config.params.vectors
-        if not isinstance(vectors, dict):
-            return {
-                "reachable": True,
-                "collection_exists": True,
-                "collection_name": settings.collection_name,
-                "points_count": info.points_count,
-                "vectors": {},
-                "schema_valid": False,
-                "schema_errors": [
-                    "The collection has one unnamed vector; this app requires four named vectors."
-                ],
-            }
-        vector_info = {
-            name: {
-                "dimensions": value.size,
-                "distance": getattr(value.distance, "value", str(value.distance)),
-            }
-            for name, value in vectors.items()
-        }
-        schema_errors = []
-        for name, dimensions in VECTOR_DIMS.items():
-            value = vectors.get(name)
-            if value is None:
-                schema_errors.append(f"Missing required '{name}' vector.")
-            elif value.size != dimensions:
-                schema_errors.append(
-                    f"'{name}' has {value.size} dimensions; expected {dimensions}."
-                )
-        for name in vectors:
-            if name not in VECTOR_DIMS:
-                schema_errors.append(f"Unexpected '{name}' vector in the collection.")
+    info = client.get_collection(settings.collection_name)
+    vectors = info.config.params.vectors
+    if not isinstance(vectors, dict):
         return {
             "reachable": True,
             "collection_exists": True,
             "collection_name": settings.collection_name,
             "points_count": info.points_count,
-            "vectors": vector_info,
-            "schema_valid": not schema_errors,
-            "schema_errors": schema_errors,
-        }
-    except Exception as exc:  # noqa: BLE001 - surface diagnostics in the UI
-        return {
-            "reachable": False,
-            "collection_exists": False,
-            "collection_name": settings.collection_name,
-            "points_count": 0,
             "vectors": {},
             "schema_valid": False,
-            "schema_errors": [],
-            "error": str(exc),
+            "schema_errors": [
+                "The collection has one unnamed vector; this app requires four named vectors."
+            ],
         }
+    vector_info = {
+        name: {
+            "dimensions": value.size,
+            "distance": getattr(value.distance, "value", str(value.distance)),
+        }
+        for name, value in vectors.items()
+    }
+    schema_errors = []
+    for name, dimensions in VECTOR_DIMS.items():
+        value = vectors.get(name)
+        if value is None:
+            schema_errors.append(f"Missing required '{name}' vector.")
+        elif value.size != dimensions:
+            schema_errors.append(
+                f"'{name}' has {value.size} dimensions; expected {dimensions}."
+            )
+    for name in vectors:
+        if name not in VECTOR_DIMS:
+            schema_errors.append(f"Unexpected '{name}' vector in the collection.")
+    return {
+        "reachable": True,
+        "collection_exists": True,
+        "collection_name": settings.collection_name,
+        "points_count": info.points_count,
+        "vectors": vector_info,
+        "schema_valid": not schema_errors,
+        "schema_errors": schema_errors,
+    }
+
+
+def collection_health(settings: Settings | None = None) -> dict[str, Any]:
+    """Return collection diagnostics, tolerating brief local-Qdrant stalls.
+
+    The health check is read-only and powers a visible UI badge. Retrying it
+    prevents one transient HTTP timeout from presenting an otherwise usable
+    collection as unavailable.
+    """
+    settings = settings or Settings.from_env()
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            return _collection_health_once(settings)
+        except Exception as exc:  # noqa: BLE001 - surface diagnostics in the UI
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.2 * (attempt + 1))
+    return {
+        "reachable": False,
+        "collection_exists": False,
+        "collection_name": settings.collection_name,
+        "points_count": 0,
+        "vectors": {},
+        "schema_valid": False,
+        "schema_errors": [],
+        "error": str(last_error),
+    }
 
 
 def _filter(video_id: str | None = None, window_id: str | None = None):
