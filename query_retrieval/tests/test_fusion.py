@@ -3,6 +3,7 @@ removed - all modalities always searched, fusion is pure rank-based). All
 expected scores are hand-computed, not just shape-checked - RRF formula
 bugs hide in the math.
 """
+from query_retrieval import config
 from query_retrieval.fusion import rrf_fuse
 
 K = 60  # matches config.RRF_K default; tests pass k explicitly for clarity
@@ -210,8 +211,20 @@ def test_modality_evidence_contributions_sum_to_fused_score():
 
 
 def test_uses_config_rrf_k_as_default():
-    from query_retrieval import config
     import inspect
 
     default_k = inspect.signature(rrf_fuse).parameters["k"].default
     assert default_k == config.RRF_K
+
+
+def test_inherited_caption_is_discounted_but_remains_visible():
+    direct = _hit("direct")
+    inherited = _hit("inherited")
+    inherited["payload"]["caption_inherited"] = True
+
+    fused = rrf_fuse({"caption": [direct, inherited]}, k=K)
+    by_id = {hit.window_id: hit for hit in fused}
+
+    assert by_id["direct"].fused_score == 1.0 / (K + 1)
+    assert by_id["inherited"].fused_score == config.CAPTION_INHERITED_WEIGHT / (K + 2)
+    assert by_id["inherited"].modality_evidence[0].contribution < by_id["direct"].modality_evidence[0].contribution

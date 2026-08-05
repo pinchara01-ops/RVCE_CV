@@ -64,12 +64,18 @@ def rrf_fuse(
             if window_id is None:
                 continue
 
-            contribution = modality_weight * (1.0 / (k + rank))
+            payload_data = hit.get("payload") or {}
+            caption_modifier = (
+                config.CAPTION_INHERITED_WEIGHT
+                if modality == "caption" and payload_data.get("caption_inherited", False)
+                else 1.0
+            )
+            contribution = modality_weight * caption_modifier * (1.0 / (k + rank))
             scores[window_id] = scores.get(window_id, 0.0) + contribution
             entry = ModalityEvidence(modality=modality, rank=rank, contribution=contribution)
 
             if window_id not in payloads:
-                payloads[window_id] = WindowPayload(**(hit.get("payload") or {}))
+                payloads[window_id] = WindowPayload(**payload_data)
                 matched[window_id] = [modality]
                 evidence[window_id] = [entry]
             else:

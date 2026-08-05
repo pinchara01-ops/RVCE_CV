@@ -38,8 +38,7 @@ def connect_qdrant() -> QdrantClient:
     global _client
     if _client is None:
         _client = QdrantClient(
-            host=config.QDRANT_HOST,
-            port=config.QDRANT_PORT,
+            url=config.QDRANT_URL,
             api_key=config.QDRANT_API_KEY,
         )
     return _client
@@ -158,4 +157,13 @@ def search_speech(vector: list[float], top_k: int = config.DEFAULT_TOP_K) -> lis
 
 
 def search_caption(vector: list[float], top_k: int = config.DEFAULT_TOP_K) -> list[dict]:
-    return _search("caption", vector, top_k)
+    # Fetch additional candidates before filtering so unavailable captions do
+    # not make an otherwise populated collection appear empty.  Pre-merge
+    # development points did not carry caption_available, which is treated as
+    # available for backwards compatibility.
+    candidates = _search("caption", vector, top_k * 3)
+    return [
+        hit
+        for hit in candidates
+        if (hit.get("payload") or {}).get("caption_available", True)
+    ][:top_k]

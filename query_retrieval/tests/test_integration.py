@@ -217,18 +217,17 @@ def test_concurrent_modality_search_does_not_mix_up_modality_results(api_client,
         assert r["state"] == "retrieved"
 
 
-# --- 3. /health readiness gating ---
+# --- 3. /health lazy readiness ---
 
 
-def test_health_reports_not_ready_before_warmup(monkeypatch):
+def test_health_reports_on_demand_before_first_search(monkeypatch):
     monkeypatch.setattr(encoders, "warmup", lambda: None)  # keep startup fast, no real model load
     with TestClient(api.app) as c:
-        # startup already flipped _encoders_ready True via the stubbed warmup;
-        # force it back down to simulate "warmup still running mid-startup"
+        # The unified API intentionally loads query models on first search.
         monkeypatch.setattr(api, "_encoders_ready", False)
         resp = c.get("/health")
-    assert resp.status_code == 503
-    assert resp.json()["status"] == "loading"
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "on_demand"
 
 
 def test_health_reports_ready_after_warmup(api_client):

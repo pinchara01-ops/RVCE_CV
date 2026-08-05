@@ -25,6 +25,9 @@ def _int(name: str, default: int) -> int:
 # Qdrant connection
 QDRANT_HOST: str = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT: int = _int("QDRANT_PORT", 6333)
+# Processing/indexing uses one URL setting. Keep host/port as a backwards-
+# compatible fallback for existing local .env files, but prefer the shared URL.
+QDRANT_URL: str = os.getenv("QDRANT_URL", f"http://{QDRANT_HOST}:{QDRANT_PORT}")
 QDRANT_API_KEY: str | None = os.getenv("QDRANT_API_KEY")
 
 # Collection
@@ -125,3 +128,10 @@ VERIFICATION_TIMEOUT_SECONDS: float = float(os.getenv("VERIFICATION_TIMEOUT_SECO
 # Only the top-N candidates by fused_score get verified - cost control,
 # verification is O(candidates) LLM calls, not O(1).
 VERIFICATION_TOP_N: int = _int("VERIFICATION_TOP_N", 5)
+
+# Captions copied from a nearby selected window are useful context but are
+# not evidence that the skipped window itself contains the described action.
+# Keep their contribution visible but below a direct VLM caption.
+CAPTION_INHERITED_WEIGHT: float = float(
+    os.getenv("CAPTION_INHERITED_WEIGHT", "0.5")
+)

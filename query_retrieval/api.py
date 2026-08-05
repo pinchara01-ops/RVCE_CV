@@ -3,10 +3,11 @@ real query encoders, weighted RRF fusion, window merging, optional query
 decomposition, and optional async candidate verification.
 """
 import logging
+import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +32,7 @@ from query_retrieval.qdrant_client import (
     search_visual,
 )
 from query_retrieval.verification import verify_candidate
+from processing_indexing.library import media_path_for_source
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +62,11 @@ _SEARCH_FNS = {
 # modality, matching the 4 concurrent Qdrant searches issued per request.
 _search_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="qdrant-search")
 
-# Explicit readiness flag rather than relying on ASGI startup-blocking
-# semantics: /health must not report ready until encoder warmup has
-# actually finished, or a demo's first query eats the full model-load
-# latency instead of a cheap health poll catching that window.
+# Query models are loaded lazily so indexing remains responsive at startup.
+# The health endpoint reports the truthful on-demand state until a first
+# query has performed the guarded warmup below.
 _encoders_ready = False
+_encoder_load_lock = threading.Lock()
 
 # Bounded in-memory cache of recent /search results, keyed by window_id -
 # lets /verify look up a candidate's evidence (transcript/caption/
@@ -92,13 +94,22 @@ def _remember_for_verification(results: list[SearchResultItem]) -> None:
         _recent_results.popitem(last=False)
 
 
-@app.on_event("startup")
 def _load_encoders() -> None:
-    """Eagerly load all encoder models so a broken model fails loudly at
-    boot, not silently on the first demo query."""
+    """Load query encoders on demand.
+
+    The unified app also hosts video processing.  Starting it must leave the
+    upload/indexing UI responsive instead of downloading every query model
+    before a user has asked to search.  The first search performs one guarded
+    warmup; all following searches reuse the cached models.
+    """
     global _encoders_ready
-    encoders.warmup()
-    _encoders_ready = True
+    if _encoders_ready:
+        return
+    with _encoder_load_lock:
+        if _encoders_ready:
+            return
+        encoders.warmup()
+        _encoders_ready = True
 
 
 @app.post("/search", response_model=SearchResponse)
@@ -140,6 +151,14 @@ def search(request: SearchRequest) -> SearchResponse:
     silently returning an empty result set that would be indistinguishable
     from "no matches".
     """
+    try:
+        _load_encoders()
+    except Exception as exc:  # noqa: BLE001 - return an actionable UI error
+        raise HTTPException(
+            status_code=503,
+            detail=f"Query models could not be loaded: {exc}",
+        ) from exc
+
     weights = None
     required_conditions: list[str] = []
 
@@ -187,6 +206,9 @@ def search(request: SearchRequest) -> SearchResponse:
             matched_modalities=region.matched_modalities,
             modality_evidence=region.modality_evidence,
             state="retrieved",
+            source_path=region.payload.source_path,
+            media_available=media_path_for_source(region.payload.source_path)
+            is not None,
         )
         for region in regions
     ]
@@ -238,12 +260,14 @@ def verify(request: VerifyRequest) -> VerifyResponse:
 
 
 @app.get("/health")
-def health(response: Response) -> dict:
+def health() -> dict:
     """`verification_enabled` lets the frontend decide whether to call
     /verify at all - checking this first (rather than firing /verify
     unconditionally and reacting to a 404) means the UI never shows even
     a brief "verifying..." flash when the feature is off server-side."""
     if not _encoders_ready:
-        response.status_code = 503
-        return {"status": "loading"}
+        return {
+            "status": "on_demand",
+            "verification_enabled": config.ENABLE_VERIFICATION,
+        }
     return {"status": "ok", "verification_enabled": config.ENABLE_VERIFICATION}

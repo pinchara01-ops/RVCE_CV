@@ -17,6 +17,12 @@ class WindowPayload(BaseModel):
     caption: str = ""
     has_audio: bool = False
     vlm_processed: bool = False
+    # Added by the processing pipeline.  Older seeded development points
+    # legitimately lack these fields, so defaults preserve compatibility.
+    source_path: str = ""
+    caption_direct: bool = True
+    caption_inherited: bool = False
+    caption_available: bool = True
 
 
 class SearchHit(BaseModel):
@@ -53,6 +59,10 @@ class SearchResultItem(BaseModel):
     score: float
     matched_modalities: list[str]
     modality_evidence: list[ModalityEvidence] = Field(default_factory=list)
+    # Keep the local path server-side.  The browser uses a media endpoint
+    # keyed by window_id rather than receiving an absolute filesystem path.
+    source_path: str = Field(default="", exclude=True)
+    media_available: bool = False
     # Only "retrieved" exists today - there's no verification stage yet.
     # A plain str (not a Literal) so a future verification stage can add
     # "verified" / "rejected" without a breaking schema change.
