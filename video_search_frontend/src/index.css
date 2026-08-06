@@ -1,0 +1,86 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --canvas: #0a0a0a;
+  --surface: #14130f;
+  --surface-raised: #1a1917;
+  --line: rgba(232, 213, 168, 0.14);
+  --ink: #f4f1ea;
+  --muted: #9a9488;
+  --accent: #c9a86a;
+  --accent-soft: #e8d5a8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: rgba(201, 168, 106, 0.25);
+  color: var(--ink);
+}
+
+/* Liquid-glass surface: soft blur + a hairline gradient ring drawn via a
+   masked ::before so only the border (not the fill) shows the gradient. */
+.liquid-glass {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.08);
+}
+
+.liquid-glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.2px;
+  background: linear-gradient(
+    180deg,
+    rgba(232, 213, 168, 0.4) 0%,
+    rgba(232, 213, 168, 0.12) 20%,
+    rgba(232, 213, 168, 0) 40%,
+    rgba(232, 213, 168, 0) 60%,
+    rgba(232, 213, 168, 0.12) 80%,
+    rgba(232, 213, 168, 0.4) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
