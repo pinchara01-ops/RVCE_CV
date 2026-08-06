@@ -1,6 +1,6 @@
 import type { SearchResponse } from './api'
 
-// TEMPORARY DEMO DATA — used only when the real /search backend
+// TEMPORARY DEMO DATA, used only when the real /search backend
 // (query_retrieval/api.py + Qdrant) isn't reachable, so the reveal card /
 // results / pipeline UI can still be tried end-to-end. Delete this file and
 // its call site in api.ts once the backend is wired up for real use.
@@ -13,7 +13,7 @@ export function buildMockResponse(query: string): SearchResponse {
         start: 134,
         end: 149,
         transcript: '',
-        caption: `A person opens a red door and steps outside at night — closest match for "${query}"`,
+        caption: `A person opens a red door and steps outside at night, closest match for "${query}"`,
         score: 0.82,
         matched_modalities: ['visual', 'caption'],
         modality_evidence: [],

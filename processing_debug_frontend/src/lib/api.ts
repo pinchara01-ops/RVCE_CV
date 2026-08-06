@@ -192,7 +192,7 @@ export type SearchVerificationRequest = {
   api_key?: string;
   /** Number of fused regions to run through the first VLM verification pass. */
   top_n?: number;
-  /** Run a bounded second VLM pass to return a 2–5 second event span. */
+  /** Run a bounded second VLM pass to return a 2-5 second event span. */
   enable_temporal_localization?: boolean;
 };
 

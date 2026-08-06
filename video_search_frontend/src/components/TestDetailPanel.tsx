@@ -28,7 +28,7 @@ export function TestDetailPanel({ result }: { result: TestResult }) {
           </div>
         ) : (
           <div className="flex aspect-video w-full items-center justify-center rounded-xl border border-dashed border-white/10 bg-ink-800/50 px-3 text-center text-xs text-paper-300/40">
-            No sample clip — not a retrieval case
+            No sample clip, not a retrieval case
           </div>
         )}
       </div>

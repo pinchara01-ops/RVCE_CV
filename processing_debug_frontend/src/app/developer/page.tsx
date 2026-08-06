@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { QuickDemoSection } from "./QuickDemoSection";
 
 export default function DeveloperPage() {
   return (
@@ -13,6 +14,7 @@ export default function DeveloperPage() {
         <Link className="developer-link" href="/library"><strong>Indexed library</strong><span>Inspect stored videos, clip windows, embeddings, transcripts, and VLM captions.</span></Link>
         <Link className="developer-link" href="/processing"><strong>Upload and processing</strong><span>Index a source video with the active runtime profile.</span></Link>
       </section>
+      <QuickDemoSection />
     </main>
   );
 }

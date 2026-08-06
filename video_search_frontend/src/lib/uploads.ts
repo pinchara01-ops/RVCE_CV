@@ -31,7 +31,7 @@ interface JobStatusPayload {
 // Real ingestion pipeline: upload the file to /api/processing/jobs, start it,
 // then poll job status until it reaches a terminal state. index_qdrant=true
 // is required for the upload to actually become searchable from the Home
-// page — without it the backend still processes the video but never writes
+// page, without it the backend still processes the video but never writes
 // its vectors to Qdrant.
 function uploadVideo(file: File, onProgress: (percent: number) => void, signal: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {

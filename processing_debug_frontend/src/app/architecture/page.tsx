@@ -116,7 +116,7 @@ const STAGE_COPY: Record<StageKey, { eyebrow: string; title: string; explanation
   verification: {
     eyebrow: "Query",
     title: "Evidence + localisation",
-    explanation: "Only the final few reranked regions are inspected to explain the match and refine a 2–5 second moment.",
+    explanation: "Only the final few reranked regions are inspected to explain the match and refine a 2-5 second moment.",
     output: "evidence + time span",
   },
   query_decomposition: {

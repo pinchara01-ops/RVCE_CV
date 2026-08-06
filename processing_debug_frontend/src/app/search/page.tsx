@@ -92,7 +92,7 @@ function stateClass(state: string): string {
 }
 
 function formatRange(start: number, end: number): string {
-  return `${start.toFixed(1)}s–${end.toFixed(1)}s`;
+  return `${start.toFixed(1)}s-${end.toFixed(1)}s`;
 }
 
 function configuredProvider(

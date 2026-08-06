@@ -28,7 +28,7 @@ function excerpt(value: unknown, fallback: string, length = 110): string {
 }
 
 function rangeLabel(payload: WindowPayload): string {
-  return `${Number(payload.start || 0).toFixed(1)}s–${Number(payload.end || 0).toFixed(1)}s`;
+  return `${Number(payload.start || 0).toFixed(1)}s-${Number(payload.end || 0).toFixed(1)}s`;
 }
 
 function profileLabel(payload: WindowPayload): string {
@@ -273,7 +273,7 @@ function VideoLibraryContent() {
           <div className="section-heading">
             <div>
               <p className="eyebrow">Selected clip</p>
-              <h2>{start.toFixed(1)}s–{end.toFixed(1)}s</h2>
+              <h2>{start.toFixed(1)}s-{end.toFixed(1)}s</h2>
             </div>
             <p className="code">{active.payload.window_id}</p>
           </div>

@@ -1,12 +1,12 @@
 /**
- * Camera portrait for the Upload hero's left column — the real asset at
+ * Camera portrait for the Upload hero's left column, the real asset at
  * public/cameraside.png (already shot in the same moody, single-light-source
  * style as the rest of the product: gold key light, black background, a
  * thread of light swirling toward a galaxy). The edges are feathered with a
  * radial mask so the photo's black background dissolves into the page's own
  * dark background instead of sitting in a visible rectangle, and the crop is
- * weighted toward the right so the galaxy — which visually points at the
- * headline/upload area — stays in frame.
+ * weighted toward the right so the galaxy, which visually points at the
+ * headline/upload area, stays in frame.
  */
 export function CameraHero() {
   return (

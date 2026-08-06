@@ -7,9 +7,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Secrets and local configuration
+# Secrets and local configuration. Templates stay tracked so a fresh clone
+# still documents which variables are required.
 .env
 .env.*
+!.env.example
+!.env.*.example
 *.key
 
 # Model caches and local runtime data
@@ -23,11 +26,28 @@ __pycache__/
 *.safetensors
 qdrant_data/
 processing_jobs/
+
+# Media. Video and audio are large and mostly re-derivable, so they stay local.
+# Manifests, READMEs, and licence records that describe them remain tracked.
+*.mp4
+*.webm
+*.mov
+*.avi
+*.mkv
+*.m4v
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+test_assets/asset_library/media/
+test_assets/asset_library/**/videos/
+test_assets/asset_library/*.log
 test_assets/debug_processing_video.mp4
 test_assets/debug_processing_speech.wav
-# Downloaded evaluation videos stay local; keep their manifest and README trackable.
-test_assets/asset_library/media/
-test_assets/asset_library/*.log
+
+# Frontend hero asset: 20 MB, fetched from the CDN when absent.
+video_search_frontend/public/hero.mp4
 
 # Node build output
 frontend/node_modules/
@@ -35,11 +55,22 @@ frontend/dist/
 frontend/.vite/
 processing_debug_frontend/node_modules/
 processing_debug_frontend/.next/
+processing_debug_frontend/out/
+video_search_frontend/node_modules/
+video_search_frontend/dist/
+video_search_frontend/.vite/
+node_modules/
 npm-debug.log*
 yarn-debug.log*
+pnpm-debug.log*
+
+# Deployment build caches
+.vercel/
+.next/
 
 # Local editor/session state
 .DS_Store
 .vscode/
 .idea/
 .claude/
+*.swp

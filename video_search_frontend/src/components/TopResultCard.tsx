@@ -49,7 +49,7 @@ export function TopResultCard({ result, resultCount, onViewAll }: TopResultCardP
           <div className="flex items-center justify-between gap-2">
             <span className="truncate text-sm font-medium text-paper-100">{result.video_id}</span>
             <span className="shrink-0 font-mono text-xs text-paper-300/50">
-              {formatTimestamp(result.start)} – {formatTimestamp(result.end)}
+              {formatTimestamp(result.start)}, {formatTimestamp(result.end)}
             </span>
           </div>
           <p className="mt-1 line-clamp-2 text-xs text-paper-300/60">{matchReason(result)}</p>

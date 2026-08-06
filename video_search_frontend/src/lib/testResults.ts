@@ -13,7 +13,7 @@ export interface TestResult {
   /** What actually happened on the run this row represents. */
   actual: string
   /**
-   * "<filename> · <mm:ss>–<mm:ss>" for retrieval-style cases with a sample
+   * "<filename> · <mm:ss>-<mm:ss>" for retrieval-style cases with a sample
    * clip to preview. Omitted for data-integrity/input-validation cases that
    * have no associated footage.
    */
@@ -33,7 +33,7 @@ export function summarizeTestResults(results: TestResult[]): TestSummary {
   return summary
 }
 
-// PLACEHOLDER DATA — these 13 rows are dummy QA output, not a real test run.
+// PLACEHOLDER DATA, these 13 rows are dummy QA output, not a real test run.
 // Swap this array for whatever a real pipeline test-run artifact/endpoint
 // returns once live integration exists; `pages/Tests.tsx` and `TestsTable`
 // only depend on the `TestResult[]` shape above, so the categories, names,
@@ -42,25 +42,25 @@ export function summarizeTestResults(results: TestResult[]): TestSummary {
 export const TEST_RESULTS: TestResult[] = [
   {
     id: 'hindi-script-preserved',
-    name: 'Hindi query — script preserved',
+    name: 'Hindi query, script preserved',
     category: 'Multilingual',
     status: 'pass',
     description: "Devanagari script isn't transliterated or mangled before reaching the query encoder.",
     query: 'रात में लाल दरवाज़ा खोलता हुआ व्यक्ति',
     expected: 'Query string reaches the encoder byte-identical, with no transliteration or normalization loss.',
     actual: 'Script passed through unchanged; embeddings generated from the original Devanagari text.',
-    sampleClip: 'porch_cam_01.mp4 · 00:58–01:06',
+    sampleClip: 'porch_cam_01.mp4 · 00:58-01:06',
   },
   {
     id: 'kannada-script-preserved',
-    name: 'Kannada query — script preserved',
+    name: 'Kannada query, script preserved',
     category: 'Multilingual',
     status: 'pass',
     description: 'Kannada script is preserved through decomposition and encoding.',
     query: 'ಒಬ್ಬ ವ್ಯಕ್ತಿ ರಾತ್ರಿ ಕೆಂಪು ಬಾಗಿಲು ತೆರೆಯುತ್ತಿದ್ದಾನೆ',
     expected: 'Query decomposition preserves Kannada script across all per-modality sub-queries.',
     actual: 'Script preserved in visual, caption, and speech sub-queries alike.',
-    sampleClip: 'hallway_interior.mp4 · 05:02–05:11',
+    sampleClip: 'hallway_interior.mp4 · 05:02-05:11',
   },
   {
     id: 'mixed-language-query',
@@ -71,7 +71,7 @@ export const TEST_RESULTS: TestResult[] = [
     query: 'a person outside देर रात door खोलता हुआ',
     expected: 'Decomposition splits per-modality text without dropping either language span.',
     actual: 'Both language spans were embedded correctly; no truncation observed.',
-    sampleClip: 'backyard_camera_04.mp4 · 02:14–02:29',
+    sampleClip: 'backyard_camera_04.mp4 · 02:14-02:29',
   },
   {
     id: 'empty-query-handling',
@@ -80,7 +80,7 @@ export const TEST_RESULTS: TestResult[] = [
     status: 'pass',
     description: 'An empty or whitespace-only query is rejected before it reaches the encoders.',
     query: '"" (empty string)',
-    expected: 'Request is rejected before any encoder call — no wasted inference.',
+    expected: 'Request is rejected before any encoder call, no wasted inference.',
     actual: 'Rejected with "query must not be empty"; encoders were never invoked.',
   },
   {
@@ -90,17 +90,17 @@ export const TEST_RESULTS: TestResult[] = [
     status: 'pass',
     description: 'A query with no plausible match returns an empty result set instead of low-confidence noise.',
     query: 'a dog flying a kite',
-    expected: 'Empty results array — no fabricated low-confidence matches padded in.',
+    expected: 'Empty results array, no fabricated low-confidence matches padded in.',
     actual: 'Returned 0 results, as expected for this library.',
   },
   {
     id: 'split-leakage',
-    name: 'Split leakage — same source_video_id in two splits',
+    name: 'Split leakage, same source_video_id in two splits',
     category: 'Data integrity',
     status: 'warning',
     description: 'One clip appears in both the train and eval splits; flagged, not yet excluded.',
     expected: 'Every source_video_id appears in exactly one of train/eval/test.',
-    actual: 'cam03_0417 found in both train.jsonl and eval.jsonl — flagged for exclusion, not yet fixed.',
+    actual: 'cam03_0417 found in both train.jsonl and eval.jsonl, flagged for exclusion, not yet fixed.',
   },
   {
     id: 'negative-example-missing-reason',
@@ -131,29 +131,29 @@ export const TEST_RESULTS: TestResult[] = [
   },
   {
     id: 'reranker-timeout-fallback',
-    name: 'Reranker timeout — falls back to fused ranking',
+    name: 'Reranker timeout, falls back to fused ranking',
     category: 'Retrieval robustness',
     status: 'warning',
     description: 'Fallback engages correctly, but the fallback path runs 1.8s slower than its budget.',
     query: 'a person opening a red door at night',
     expected: 'On timeout, the response falls back to fused (RRF) order within its latency budget.',
     actual: 'Fallback triggered correctly, but took 2.1s against a 300ms budget.',
-    sampleClip: 'backyard_camera_04.mp4 · 02:14–02:29',
+    sampleClip: 'backyard_camera_04.mp4 · 02:14-02:29',
   },
   {
     id: 'reranker-exception-fallback',
-    name: 'Reranker exception — falls back to fused ranking',
+    name: 'Reranker exception, falls back to fused ranking',
     category: 'Retrieval robustness',
     status: 'pass',
     description: 'An unhandled reranker exception fails open to the RRF-fused order instead of dropping results.',
     query: 'a person opening a red door at night',
     expected: 'An unhandled exception in the reranker must not remove recall.',
     actual: 'Fused order returned unchanged; no results were dropped.',
-    sampleClip: 'backyard_camera_04.mp4 · 02:14–02:29',
+    sampleClip: 'backyard_camera_04.mp4 · 02:14-02:29',
   },
   {
     id: 'upload-unsupported-format',
-    name: 'Upload — unsupported file format rejected',
+    name: 'Upload, unsupported file format rejected',
     category: 'Upload validation',
     status: 'pass',
     description: 'A non-MP4/MOV/AVI file is rejected client-side with a clear reason before any upload starts.',
@@ -162,7 +162,7 @@ export const TEST_RESULTS: TestResult[] = [
   },
   {
     id: 'upload-exceeds-size-limit',
-    name: 'Upload — file exceeds size limit rejected',
+    name: 'Upload, file exceeds size limit rejected',
     category: 'Upload validation',
     status: 'pass',
     description: 'A file over the 2GB placeholder limit is rejected immediately instead of starting a doomed upload.',

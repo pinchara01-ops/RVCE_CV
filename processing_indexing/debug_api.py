@@ -4,13 +4,16 @@ import json
 import logging
 import math
 import mimetypes
+import os
 import re
 from dataclasses import replace
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from query_retrieval import api as query_api
@@ -34,6 +37,9 @@ from .library import (
 )
 from .preflight import model_statuses
 from .probe import VideoProbeError
+from .quick_demo import router as quick_demo_router
+from .quick_index import router as quick_index_router
+from .drive_connector import router as drive_router
 from .runtime_profiles import (
     RuntimeProfileError,
     get_profile,
@@ -54,18 +60,31 @@ MULTIPART_PARSE_ERROR = "There was an error parsing the body"
 MULTIPART_RECOVERY_MESSAGE = (
     "The upload could not be read. Re-select the video and retry, keeping this page open until the upload completes."
 )
+_LOCAL_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:3017",
+    "http://127.0.0.1:3017",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+# Deployed frontends are added at runtime: set ALLOWED_ORIGINS to a
+# comma-separated list of origins, or to "*" to allow any (demo only).
+_EXTRA_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+# Vercel preview deployments get a new hostname per commit, so match the
+# project's whole subdomain space rather than pinning one URL.
+_ORIGIN_REGEX = os.environ.get("ALLOWED_ORIGIN_REGEX", r"https://.*\.vercel\.app")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:3017",
-        "http://127.0.0.1:3017",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=_LOCAL_ORIGINS + _EXTRA_ORIGINS,
+    allow_origin_regex=_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -75,6 +94,18 @@ app.add_middleware(
 runtime_sessions = RuntimeSessionStore()
 manager = JobManager(runtime_config_resolver=runtime_sessions.get_runtime_config)
 query_api.set_runtime_session_resolver(runtime_sessions.get_runtime_config)
+
+# Stateless single-call video search and indexing; independent of the
+# Qdrant-backed pipeline above.
+app.include_router(quick_demo_router)
+app.include_router(quick_index_router)
+app.include_router(drive_router)
+
+# Local evaluation corpus, served read-only so the Tests page can play the
+# actual files it describes.
+_TEST_ASSETS = Path(__file__).resolve().parent.parent / "test_assets" / "asset_library" / "media"
+if _TEST_ASSETS.is_dir():
+    app.mount("/api/test-assets", StaticFiles(directory=str(_TEST_ASSETS)), name="test-assets")
 
 
 # An API-based indexing job deliberately owns only per-upload tuning.  Cloud

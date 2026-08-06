@@ -43,7 +43,7 @@ const PROGRESS_LABELS: Record<string, string> = {
 // has no per-stage timing). When that happens we approximate each stage's
 // share of the observed round-trip time with these fixed weights, purely so
 // the tracker has something proportionate to animate through. This is a
-// MOCKED breakdown, not measured timing — flagged via `isReal: false` on
+// MOCKED breakdown, not measured timing, flagged via `isReal: false` on
 // every stage below so the UI can label it honestly.
 const MOCK_STAGE_WEIGHTS: Record<string, number> = {
   query_embedding: 0.18,

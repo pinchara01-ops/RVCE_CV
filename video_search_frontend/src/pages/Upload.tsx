@@ -27,7 +27,7 @@ export function Upload() {
               Bring your footage <span className="italic text-glow">in</span>
             </h1>
             <p className="mt-4 max-w-lg text-center text-base text-white/70 md:text-left md:text-lg">
-              Upload video files to index and search them — MP4, MOV, and AVI supported.
+              Upload video files to index and search them, MP4, MOV, and AVI supported.
             </p>
 
             <div className="mt-10 flex w-full justify-center md:justify-start">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-// Minimal history-API router — no external routing library, just enough
+// Minimal history-API router, no external routing library, just enough
 // to switch between the homepage and /upload without a full page reload.
 export function usePathname(): string {
   const [pathname, setPathname] = useState(window.location.pathname)

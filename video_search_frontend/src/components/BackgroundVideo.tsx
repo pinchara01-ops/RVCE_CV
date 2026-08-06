@@ -1,13 +1,17 @@
 import { useEffect, useRef } from 'react'
 
-const VIDEO_SRC =
+// Preferred: a local copy in public/, so the hero renders instantly and works
+// offline. That file is gitignored (20 MB), so a fresh clone or a deploy will
+// not have it; the CDN copy is the fallback for those.
+const LOCAL_SRC = '/hero.mp4'
+const REMOTE_SRC =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_115001_bcdaa3b4-03de-47e7-ad63-ae3e392c32d4.mp4'
 
 const FADE_IN_MS = 600
 
 /**
  * Full-screen background video. Fades in once on first load, then loops
- * natively (native `loop`) with no per-cycle fade — repeating a fade every
+ * natively (native `loop`) with no per-cycle fade, repeating a fade every
  * few seconds on a short clip reads as the hero flickering in and out.
  */
 export function BackgroundVideo() {
@@ -38,7 +42,12 @@ export function BackgroundVideo() {
     <video
       ref={videoRef}
       className="absolute inset-0 h-full w-full translate-y-[17%] object-cover"
-      src={VIDEO_SRC}
+      src={LOCAL_SRC}
+      onError={(event) => {
+        // Local copy absent (fresh clone or deploy): fall back to the CDN.
+        const element = event.currentTarget
+        if (!element.src.includes('cloudfront')) element.src = REMOTE_SRC
+      }}
       muted
       autoPlay
       loop

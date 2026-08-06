@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -318,6 +318,7 @@ class GoogleGenAIRuntime:
         prompt: str,
         media_path: Path | None = None,
         media_mime_type: str | None = None,
+        extra_media: Sequence[tuple[Path, str]] | None = None,
         response_schema: Mapping[str, Any] | None = None,
         operation_name: str = "generate_json",
     ) -> tuple[dict[str, Any], GeminiCallDiagnostics]:
@@ -330,12 +331,23 @@ class GoogleGenAIRuntime:
         if media_path is not None and not media_path.is_file():
             raise GeminiInputError(f"media file does not exist: {media_path}")
 
+        # One call can carry several files (for example a video plus the spoken
+        # request), which the model receives together rather than in sequence.
+        media: list[tuple[Path, str]] = []
+        if media_path is not None and media_mime_type is not None:
+            media.append((media_path, media_mime_type))
+        for path, mime_type in extra_media or ():
+            if not path.is_file():
+                raise GeminiInputError(f"media file does not exist: {path}")
+            if not mime_type.strip():
+                raise GeminiInputError("every media file needs a MIME type")
+            media.append((path, mime_type))
+
         return call_with_retry(
             lambda: self._generate_json_once(
                 model=model,
                 prompt=prompt,
-                media_path=media_path,
-                media_mime_type=media_mime_type,
+                media=media,
                 response_schema=response_schema,
             ),
             policy=self.retry_policy,
@@ -349,17 +361,17 @@ class GoogleGenAIRuntime:
         *,
         model: str,
         prompt: str,
-        media_path: Path | None,
-        media_mime_type: str | None,
+        media: Sequence[tuple[Path, str]],
         response_schema: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
         client, types = self._ensure_client_and_types()
-        upload = None
+        uploads: list[Any] = []
         try:
             contents: Any = prompt
-            if media_path is not None:
-                upload = self._upload_file(client, types, media_path, media_mime_type)
-                contents = [prompt, upload]
+            for path, mime_type in media:
+                uploads.append(self._upload_file(client, types, path, mime_type))
+            if uploads:
+                contents = [prompt, *uploads]
             config = _generate_config(types, response_schema=response_schema)
             response = client.models.generate_content(
                 model=model,
@@ -368,7 +380,7 @@ class GoogleGenAIRuntime:
             )
             return _extract_json(response)
         finally:
-            if upload is not None:
+            for upload in uploads:
                 self._delete_file_quietly(client, upload)
 
     def _ensure_client_and_types(self) -> tuple[Any, Any]:
@@ -379,13 +391,51 @@ class GoogleGenAIRuntime:
                 self._client = genai.Client(api_key=self._api_key)
         return self._client, self._types
 
-    @staticmethod
-    def _upload_file(client: Any, types: Any, path: Path, mime_type: str | None) -> Any:
+    def _upload_file(self, client: Any, types: Any, path: Path, mime_type: str | None) -> Any:
         if not mime_type:
             raise GeminiInputError("uploaded media needs a MIME type")
         config_type = getattr(types, "UploadFileConfig", None)
         config = config_type(mime_type=mime_type) if config_type is not None else {"mime_type": mime_type}
-        return client.files.upload(file=str(path), config=config)
+        upload = client.files.upload(file=str(path), config=config)
+        return self._await_active_upload(client, upload)
+
+    def _await_active_upload(
+        self,
+        client: Any,
+        upload: Any,
+        *,
+        timeout_seconds: float = 600.0,
+        poll_seconds: float = 1.0,
+    ) -> Any:
+        """Block until an uploaded file leaves PROCESSING.
+
+        Video uploads are not immediately usable: generate_content rejects a
+        file that is still PROCESSING with FAILED_PRECONDITION.  Anything that
+        does not report a state (older SDKs, injected test doubles) is returned
+        untouched so this stays a no-op for them.
+        """
+
+        if _upload_state(upload) is None:
+            return upload
+        get_file = getattr(getattr(client, "files", None), "get", None)
+        name = getattr(upload, "name", None)
+        if get_file is None or not name:
+            return upload
+
+        deadline = time.monotonic() + timeout_seconds
+        current = upload
+        while True:
+            state = _upload_state(current)
+            if state is None or state == "ACTIVE":
+                return current
+            if state == "FAILED":
+                raise GeminiResponseError("Gemini could not process the uploaded media file")
+            if time.monotonic() >= deadline:
+                raise GeminiTransportError(
+                    "Gemini did not finish processing the uploaded media in time"
+                )
+            self._sleep(poll_seconds)
+            current = get_file(name=name)
 
     @staticmethod
     def _delete_file_quietly(client: Any, upload: Any) -> None:
@@ -400,6 +450,18 @@ class GoogleGenAIRuntime:
             # The uploaded file expires server-side.  Cleanup failure should
             # not mask a successfully completed generation request.
             return
+
+
+def _upload_state(upload: Any) -> str | None:
+    """Return an uploaded file's state as an upper-case name, if it reports one."""
+
+    state = getattr(upload, "state", None)
+    if state is None and isinstance(upload, Mapping):
+        state = upload.get("state")
+    if state is None:
+        return None
+    # The SDK returns an enum; older/raw responses return a plain string.
+    return str(getattr(state, "name", None) or state).upper()
 
 
 def _load_google_sdk() -> tuple[Any, Any]:

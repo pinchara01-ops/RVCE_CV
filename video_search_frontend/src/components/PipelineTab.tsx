@@ -91,7 +91,7 @@ export function PipelineTab({ stages, modalities, hasMockedTiming }: PipelineTab
       {hasMockedTiming && (
         <p className="mt-5 text-xs text-paper-300/35">
           * This backend response has no per-stage timing, so stage durations above are
-          estimated client-side from total response time — not measured.
+          estimated client-side from total response time, not measured.
         </p>
       )}
     </div>
