@@ -11,7 +11,13 @@ import {
   Network,
   Server,
 } from 'lucide-react'
-import { listDriveVideos, SearchApiError, type DriveFile } from '../lib/api'
+import {
+  listDriveVideos,
+  indexDriveFolder,
+  SearchApiError,
+  type DriveFile,
+  type DriveIndexResponse,
+} from '../lib/api'
 import { useConnectorField } from '../lib/settings'
 import type { Strings } from '../lib/i18n'
 
@@ -156,6 +162,11 @@ export function ConnectorGrid({ strings: t, onError }: ConnectorGridProps) {
   const [active, setActive] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [files, setFiles] = useState<DriveFile[] | null>(null)
+  const [indexing, setIndexing] = useState(false)
+  const [indexed, setIndexed] = useState<DriveIndexResponse | null>(null)
+  // Each video is a full download plus a model call, so the count is capped
+  // and chosen explicitly rather than silently running the whole folder.
+  const [howMany, setHowMany] = useState(3)
   const [folder] = useConnectorField('drive_folder')
 
   const selected = CONNECTORS.find((item) => item.id === active) ?? null
@@ -171,6 +182,19 @@ export function ConnectorGrid({ strings: t, onError }: ConnectorGridProps) {
       setFiles(null)
     } finally {
       setBusy(false)
+    }
+  }
+
+  const runIndexing = async () => {
+    setIndexing(true)
+    onError(null)
+    setIndexed(null)
+    try {
+      setIndexed(await indexDriveFolder(folder.trim(), howMany))
+    } catch (cause) {
+      onError(cause instanceof SearchApiError ? cause.message : 'Indexing failed.')
+    } finally {
+      setIndexing(false)
     }
   }
 
@@ -240,9 +264,58 @@ export function ConnectorGrid({ strings: t, onError }: ConnectorGridProps) {
 
           {files && (
             <div className="mt-3 space-y-1.5">
-              <p className="font-mono text-[10px] text-paper-300/40">
-                {files.length} {t.videosFound}
-              </p>
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-glow/25 bg-glow/5 p-2.5">
+                <span className="text-xs text-paper-100">
+                  {files.length} {t.videosFound}. Index the first
+                </span>
+                <select
+                  value={howMany}
+                  onChange={(event) => setHowMany(Number(event.target.value))}
+                  disabled={indexing}
+                  className="rounded-md border border-white/15 bg-ink-900/70 px-2 py-1 text-xs text-paper-100 outline-none"
+                >
+                  {[1, 2, 3, 5, 10].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={runIndexing}
+                  disabled={indexing}
+                  className="rounded-md bg-glow px-3 py-1.5 text-xs font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+                >
+                  {indexing ? 'Indexing…' : 'Index these videos'}
+                </button>
+              </div>
+
+              {indexing && (
+                <p className="text-[10px] leading-relaxed text-paper-300/50">
+                  Each video is downloaded, described, then deleted. Long videos take a while; keep
+                  this page open.
+                </p>
+              )}
+
+              {indexed && (
+                <div className="rounded-lg border border-white/10 bg-ink-900/60 p-2.5">
+                  <p className="text-xs text-paper-100">
+                    {indexed.indexed.length} indexed · {indexed.total_windows} windows in the
+                    library
+                  </p>
+                  {indexed.indexed.map((item) => (
+                    <p key={item.id} className="mt-0.5 font-mono text-[10px] text-paper-300/50">
+                      {item.name} · {item.windows} windows
+                    </p>
+                  ))}
+                  {indexed.failed.map((item) => (
+                    <p key={item.name} className="mt-0.5 font-mono text-[10px] text-red-300/60">
+                      {item.name}: {item.error}
+                    </p>
+                  ))}
+                </div>
+              )}
+
               {files.map((item) => (
                 <div
                   key={item.id}

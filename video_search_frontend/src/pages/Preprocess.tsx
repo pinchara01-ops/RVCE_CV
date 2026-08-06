@@ -248,6 +248,13 @@ export function Preprocess() {
           {busy ? t.indexingNow : t.startIndexing}
         </button>
 
+        {!file && (
+          <p className="mt-2 text-center text-[11px] text-paper-300/40">
+            This button indexes an uploaded file. To index footage already in Drive, use
+            &ldquo;Index these videos&rdquo; in the connector above.
+          </p>
+        )}
+
         {busy && (
           <div className="mt-4">
             <StageSequence

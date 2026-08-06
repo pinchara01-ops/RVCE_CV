@@ -318,3 +318,82 @@ export async function listDriveVideos(folder: string): Promise<DriveListing> {
   }
   return res.json() as Promise<DriveListing>
 }
+
+export interface DriveIndexResponse {
+  folder_id: string
+  indexed: { id: string; name: string; windows: number }[]
+  failed: { name: string; error: string }[]
+  total_windows: number
+  total_videos: number
+  model: string
+}
+
+/**
+ * Index a Drive folder: each video is downloaded, described, and deleted in
+ * turn. Long-running by nature, so the caller must keep the page open.
+ */
+export async function indexDriveFolder(
+  folder: string,
+  maxVideos: number,
+  signal?: AbortSignal,
+): Promise<DriveIndexResponse> {
+  const body = new FormData()
+  body.append('folder', folder)
+  body.append('max_videos', String(maxVideos))
+  const driveKey = getConnectorField('drive')
+  if (driveKey) body.append('api_key', driveKey)
+  const model = getIndexModel()
+  body.append('model', model)
+
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE_URL}/api/quick/library/index-drive`, {
+      method: 'POST',
+      body,
+      signal,
+    })
+  } catch (err) {
+    if (signal?.aborted) throw err
+    throw new SearchApiError('Could not reach the indexing API on ' + API_BASE_URL + '.')
+  }
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      const parsed = await res.json()
+      if (typeof parsed?.detail === 'string') detail = parsed.detail
+    } catch {
+      // response body was not JSON; fall back to statusText
+    }
+    throw new SearchApiError(detail)
+  }
+  return res.json() as Promise<DriveIndexResponse>
+}
+
+export interface LibrarySearchResult {
+  video_id: string
+  video_name: string
+  window_id: string
+  start: number
+  end: number
+  caption: string
+  transcript: string
+  camera: string | null
+  recorded_at: string | null
+  score: number
+  relative: number
+  media_url: string
+}
+
+export async function searchLibrary(query: string): Promise<{
+  query: string
+  filter: Record<string, unknown>
+  results: LibrarySearchResult[]
+  searched_windows: number
+  matched_windows: number
+}> {
+  const body = new FormData()
+  body.append('query', query)
+  const res = await fetch(`${API_BASE_URL}/api/quick/library/search`, { method: 'POST', body })
+  if (!res.ok) throw new SearchApiError(await res.text())
+  return res.json()
+}
