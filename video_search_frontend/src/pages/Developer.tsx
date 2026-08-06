@@ -10,6 +10,8 @@ import {
   useModel,
   useQdrantTarget,
   useLanguage,
+  resetOnboarding,
+  sessionId,
   type ModelChoice,
 } from '../lib/settings'
 import { stringsFor } from '../lib/i18n'
@@ -158,9 +160,22 @@ export function Developer() {
         >
           {t.developerTitle}
         </h1>
-        <p className="mt-4 text-base text-white/70">
-          {t.developerSubtitle}
-        </p>
+        <p className="mt-4 text-base text-white/70">{t.developerSubtitle}</p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              resetOnboarding()
+              window.location.reload()
+            }}
+            className="rounded-xl border border-white/15 px-4 py-2 text-sm text-paper-300/80 transition-colors hover:border-white/30 hover:text-paper-100"
+          >
+            {t.rerunSetup}
+          </button>
+          {/* No accounts: this id only groups a visitor's own runs. */}
+          <span className="font-mono text-[10px] text-paper-300/35">session {sessionId()}</span>
+        </div>
 
         <div className="mt-10 space-y-4">
           <Panel

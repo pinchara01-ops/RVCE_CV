@@ -108,6 +108,24 @@ export interface Strings {
   activeLabel: string
   stageModels: string
   namedVectors: string
+  onboardWelcomeTitle: string
+  onboardWelcomeBody: string
+  onboardLanguageTitle: string
+  onboardLanguageBody: string
+  onboardProfileTitle: string
+  onboardProfileBody: string
+  onboardApiHint: string
+  onboardLocalHint: string
+  onboardModelTitle: string
+  onboardModelBody: string
+  onboardKeyTitle: string
+  onboardKeyBody: string
+  onboardKeyPlaceholder: string
+  onboardKeyNote: string
+  onboardSkip: string
+  onboardNext: string
+  onboardFinish: string
+  rerunSetup: string
 }
 
 const en: Strings = {
@@ -216,6 +234,26 @@ const en: Strings = {
   activeLabel: 'Active',
   stageModels: 'stage models',
   namedVectors: 'named vectors',
+  onboardWelcomeTitle: 'Ask your footage anything',
+  onboardWelcomeBody:
+    'Search video by describing what you are looking for, in your own language, by typing, speaking, or showing a reference image. A few quick choices and you are set up. No account needed.',
+  onboardLanguageTitle: 'Pick your language',
+  onboardLanguageBody: 'Changes the whole interface and the language answers come back in.',
+  onboardProfileTitle: 'Where should models run?',
+  onboardProfileBody: 'This decides the vector contract, so it is worth getting right up front.',
+  onboardApiHint: 'Hosted. Fastest to start, needs a key.',
+  onboardLocalHint: 'On your machine. No key, needs downloads.',
+  onboardModelTitle: 'Choose your models',
+  onboardModelBody: 'One model finds moments, the other builds the index. Both changeable later.',
+  onboardKeyTitle: 'Add an API key',
+  onboardKeyBody: 'Optional. Leave blank to use the key configured on the server.',
+  onboardKeyPlaceholder: 'Paste a key, or skip',
+  onboardKeyNote:
+    'Held in sessionStorage for this tab only, dropped when you close it, and never written to disk.',
+  onboardSkip: 'Skip setup',
+  onboardNext: 'Continue',
+  onboardFinish: 'Start searching',
+  rerunSetup: 'Run setup again',
 }
 
 const hi: Strings = {

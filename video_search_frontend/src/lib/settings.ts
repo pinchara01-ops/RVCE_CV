@@ -212,3 +212,30 @@ export function useConnectorField(key: string) {
 
   return [value, (next: string) => setConnectorField(key, next)] as const
 }
+
+// Local session. There is no account system: this only distinguishes "has been
+// here before" from "first visit", so onboarding runs once rather than on every
+// refresh, and gives requests a stable id to group by.
+const ONBOARDED_KEY = 'footageask.onboarded'
+const SESSION_KEY = 'footageask.session'
+
+export function hasOnboarded(): boolean {
+  return readLocal(ONBOARDED_KEY, '') === 'yes'
+}
+
+export function completeOnboarding(): void {
+  writeLocal(ONBOARDED_KEY, 'yes')
+}
+
+export function resetOnboarding(): void {
+  writeLocal(ONBOARDED_KEY, '')
+}
+
+export function sessionId(): string {
+  let existing = readLocal(SESSION_KEY, '')
+  if (!existing) {
+    existing = Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+    writeLocal(SESSION_KEY, existing)
+  }
+  return existing
+}
