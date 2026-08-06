@@ -6,9 +6,15 @@ Qdrant Cloud, load Qwen, decode video, or call a VLM provider.
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
 from processing_indexing.api_pipeline import DEFAULT_API_GEMINI_PROFILE
 from processing_indexing.runtime_profiles import API_GEMINI_FREE_V1
+from processing_indexing.gemini_runtime import (
+    GeminiAuthenticationError,
+    GeminiQuotaError,
+    GeminiSDKUnavailableError,
+)
 from query_retrieval import api, reranking
 from query_retrieval.models import (
     SearchRequest,
@@ -241,3 +247,33 @@ def test_api_zero_top_k_does_not_spend_hosted_provider_or_qdrant_work(monkeypatc
     assert calls == ["runtime"]
     assert response.results == []
     assert response.diagnostics["state"] == "skipped_zero_top_k"
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "status", "message"),
+    [
+        (
+            GeminiSDKUnavailableError("google-genai missing"),
+            503,
+            "Gemini support is not installed",
+        ),
+        (
+            GeminiAuthenticationError("invalid API key"),
+            401,
+            "Gemini rejected the API key",
+        ),
+        (
+            GeminiQuotaError("resource exhausted"),
+            429,
+            "Gemini quota or rate limit",
+        ),
+    ],
+)
+def test_api_gemini_failure_messages_are_actionable_and_safe(
+    provider_error, status, message
+):
+    response_error = api._gemini_query_http_error(provider_error)
+
+    assert response_error.status_code == status
+    assert message in str(response_error.detail)
+    assert "invalid API key" not in str(response_error.detail)

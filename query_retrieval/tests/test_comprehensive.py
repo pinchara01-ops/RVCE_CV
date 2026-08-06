@@ -18,7 +18,11 @@ from fastapi.testclient import TestClient
 from query_retrieval import api, config, encoders
 from query_retrieval.merge_windows import merge_windows
 from query_retrieval.models import FusedHit, WindowPayload
-from query_retrieval.qdrant_client import connect_qdrant, create_collection, search_audio
+from query_retrieval.qdrant_client import (
+    connect_qdrant,
+    create_collection,
+    search_audio,
+)
 from query_retrieval.seed_dummy_data import (
     DUP_VIDEO_IDS,
     EDGE_CASE_VIDEO_ID,
@@ -27,6 +31,8 @@ from query_retrieval.seed_dummy_data import (
     SHORT_VIDEO_ID,
     seed,
 )
+
+pytestmark = pytest.mark.qdrant
 
 
 @pytest.fixture(scope="module", autouse=True)

@@ -29,6 +29,19 @@ The following are the source-of-truth files for direct dependencies:
 
 No repository-wide `LICENSE`, `NOTICE`, or generated third-party attribution inventory is currently tracked. That is a governance gap to resolve before distributing a packaged build.
 
+## Automation and evidence
+
+The repository's [quality workflow](../../.github/workflows/quality.yml) is a
+repeatable integration check for the declared Python/browser manifests and the
+pinned Qdrant image. It installs the manifests from scratch, starts Qdrant in
+an isolated runner, runs the Python quality gates, and builds the browser
+application. It is a dependency-consumption check—not a substitute for a
+resolved licence/SBOM review, model-card review, or provider terms audit.
+
+The [rubric evidence matrix](../delivery/rubric-evidence-matrix.md) maps this
+register to the acceptance plan and the concrete test evidence expected in a
+review.
+
 ## Direct application libraries
 
 ### Backend, API, and operational libraries
@@ -72,6 +85,7 @@ No repository-wide `LICENSE`, `NOTICE`, or generated third-party attribution inv
 | [Vitest](https://vitest.dev/) | `^4.1.10` | Frontend unit tests. | Build-time quality control. | Keep test coverage focused on user-visible filtering, state, and protocol behavior. |
 | [pytest](https://docs.pytest.org/) | `pytest>=8,<9` | Python test runner. | Build-time and integration-test quality control. | Tests marked `integration` require actual FFmpeg, model availability, test media, and Qdrant. |
 | [Ruff](https://docs.astral.sh/ruff/) | `ruff>=0.6,<1` | Python linting and formatting checks. | Build-time quality control. | Add a pinned configuration and CI command before treating lint cleanliness as a release gate. |
+| [GitHub Actions](https://docs.github.com/actions) (`actions/checkout@v4`, `actions/setup-python@v5`, `actions/setup-node@v4`) | Pinned action major versions in `.github/workflows/quality.yml` | Pull-request automation for dependency installation, isolated Qdrant tests, and browser quality gates. | Hosted CI only; it is not part of the product runtime. | Review action revisions, runner access, logs, and organisation billing/security policy before enabling it on a public or sensitive repository. |
 
 ## Model and service inventory
 

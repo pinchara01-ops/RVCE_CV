@@ -8,12 +8,11 @@ export function AppNav() {
         <span>Video Index</span>
       </Link>
       <nav aria-label="Main navigation">
-        <Link href="/architecture">Architecture</Link>
-        <Link href="/processing">Index</Link>
-        <Link href="/library">Library</Link>
-        <Link href="/search">Search</Link>
+        <Link href="/">Search</Link>
+        <Link href="/processing">Upload</Link>
+        <Link href="/developer">Developer options</Link>
       </nav>
-      <span className="header-note">Self-hosted or API-based</span>
+      <span className="header-note">API defaults active</span>
     </header>
   );
 }

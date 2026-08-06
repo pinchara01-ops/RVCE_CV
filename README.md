@@ -143,7 +143,12 @@ Open `http://localhost:3000`.
 
 ```powershell
 pytest processing_indexing/tests -m "not integration"
-pytest query_retrieval/tests -q
+pytest query_retrieval/tests -m "not qdrant" -q
+
+# Requires Docker/Qdrant. This uses only the isolated test collection and
+# fails clearly if the database is unavailable.
+docker compose up -d qdrant
+pytest query_retrieval/tests -m qdrant -q --require-qdrant
 ```
 
 The first real indexing/search run downloads the open model weights into `.model-cache`, so it may take a little longer. The full vision-caption route can use the optional local **Qwen2.5-VL-3B** model (the laptop default) or a configured hosted vision API; it is not required for indexing or searching locally.

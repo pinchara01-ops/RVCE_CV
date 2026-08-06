@@ -17,6 +17,8 @@ from query_retrieval.qdrant_client import (
 )
 from query_retrieval.seed_dummy_data import seed
 
+pytestmark = pytest.mark.qdrant
+
 
 @pytest.fixture(scope="module", autouse=True)
 def seeded_collection():

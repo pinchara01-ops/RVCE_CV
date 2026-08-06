@@ -593,6 +593,73 @@ def _api_profile_query_filter(contract: Any) -> Any:
     )
 
 
+def _gemini_query_http_error(exc: BaseException) -> HTTPException:
+    """Map classified provider failures to safe, actionable search errors.
+
+    The browser must be told whether a retry, setup change, or dependency
+    install is required, but never receive a provider response that might
+    contain endpoint metadata or credentials.
+    """
+
+    from processing_indexing.gemini_embeddings import (
+        GeminiEmbeddingInputError,
+        GeminiEmbeddingResponseError,
+        GeminiEmbeddingSDKUnavailableError,
+    )
+    from processing_indexing.gemini_runtime import (
+        GeminiAuthenticationError,
+        GeminiInputError,
+        GeminiQuotaError,
+        GeminiResponseError,
+        GeminiRuntimeError,
+        GeminiSDKUnavailableError,
+        GeminiTransportError,
+    )
+
+    if isinstance(exc, (GeminiEmbeddingSDKUnavailableError, GeminiSDKUnavailableError)):
+        return HTTPException(
+            503,
+            detail=(
+                "Gemini support is not installed in the backend. "
+                "Install requirements.txt, then restart the backend."
+            ),
+        )
+    if isinstance(exc, GeminiAuthenticationError):
+        return HTTPException(
+            401,
+            detail="Gemini rejected the API key. Update it in API-based setup and retry.",
+        )
+    if isinstance(exc, GeminiQuotaError):
+        return HTTPException(
+            429,
+            detail="Gemini quota or rate limit was reached. Wait briefly, then retry the search.",
+        )
+    if isinstance(exc, GeminiTransportError):
+        return HTTPException(
+            503,
+            detail="Gemini is temporarily unavailable. Retry the search in a moment.",
+        )
+    if isinstance(exc, (GeminiEmbeddingInputError, GeminiInputError)):
+        return HTTPException(
+            400,
+            detail="Gemini could not prepare this query. Check the selected models in API-based setup.",
+        )
+    if isinstance(exc, (GeminiEmbeddingResponseError, GeminiResponseError)):
+        return HTTPException(
+            502,
+            detail="Gemini returned an unusable response. Retry the search.",
+        )
+    if isinstance(exc, GeminiRuntimeError):
+        return HTTPException(
+            502,
+            detail="Gemini rejected the query request. Check API-based setup and the selected model.",
+        )
+    return HTTPException(
+        503,
+        detail="Gemini query expansion or embeddings are unavailable. Check API-based setup and retry.",
+    )
+
+
 def _search_api_profile(request: SearchRequest) -> SearchResponse:
     """Four-channel Gemini/Qdrant Cloud recall, then bounded precision steps."""
 
@@ -666,8 +733,13 @@ def _search_api_profile(request: SearchRequest) -> SearchResponse:
     except HTTPException:
         raise
     except Exception as exc:  # provider details can include request metadata
-        logger.info("API query expansion/embedding unavailable: %s", type(exc).__name__)
-        raise HTTPException(503, detail="Gemini query expansion or embeddings are unavailable") from exc
+        mapped = _gemini_query_http_error(exc)
+        logger.info(
+            "API query expansion/embedding unavailable: %s (status=%s)",
+            type(exc).__name__,
+            mapped.status_code,
+        )
+        raise mapped from exc
 
     per_channel_k = max(10, min(100, max(request.rerank_top_n, request.top_k * 3)))
     modality_hits: dict[str, list[dict]] = {}

@@ -13,6 +13,7 @@ from processing_indexing.gemini_embeddings import (
     normalize_transcript_input,
     normalize_video_input,
 )
+from processing_indexing.gemini_runtime import GeminiQuotaError, GeminiRetryPolicy
 
 
 def _vector(
@@ -256,3 +257,66 @@ def test_google_transport_accepts_an_injected_sdk_client_without_importing(tmp_p
     )
 
     assert len(adapter.embed_visual(video, dimensions=512)) == 512
+
+
+def test_google_transport_retries_transient_embedding_failure():
+    calls = []
+
+    class FakeTypes:
+        class EmbedContentConfig:
+            def __init__(self, *, output_dimensionality):
+                self.output_dimensionality = output_dimensionality
+
+    class FakeModels:
+        def embed_content(self, **_kwargs):
+            calls.append("embed")
+            if len(calls) == 1:
+                raise TimeoutError("temporary connection failure")
+            return {"embeddings": [{"values": _vector()}]}
+
+    class FakeClient:
+        models = FakeModels()
+
+    transport = GoogleGenAIEmbeddingClient(
+        client=FakeClient(),
+        types_module=FakeTypes,
+        retry_policy=GeminiRetryPolicy(
+            max_attempts=2, initial_delay_seconds=0, max_delay_seconds=0
+        ),
+    )
+    adapter = GeminiEmbedding2Adapter(transport)
+
+    assert len(adapter.embed_transcript(normalize_transcript_input("car crash"))) == 1536
+    assert calls == ["embed", "embed"]
+
+
+def test_google_transport_classifies_quota_failure_without_retrying_forever():
+    calls = []
+
+    class FakeTypes:
+        class EmbedContentConfig:
+            def __init__(self, *, output_dimensionality):
+                self.output_dimensionality = output_dimensionality
+
+    class FakeModels:
+        def embed_content(self, **_kwargs):
+            calls.append("embed")
+            error = RuntimeError("resource exhausted")
+            error.status_code = 429
+            raise error
+
+    class FakeClient:
+        models = FakeModels()
+
+    transport = GoogleGenAIEmbeddingClient(
+        client=FakeClient(),
+        types_module=FakeTypes,
+        retry_policy=GeminiRetryPolicy(
+            max_attempts=2, initial_delay_seconds=0, max_delay_seconds=0
+        ),
+    )
+    adapter = GeminiEmbedding2Adapter(transport)
+
+    with pytest.raises(GeminiQuotaError):
+        adapter.embed_transcript(normalize_transcript_input("car crash"))
+    assert calls == ["embed", "embed"]

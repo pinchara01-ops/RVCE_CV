@@ -174,18 +174,49 @@ video { width: 100%; max-height: 510px; border-radius: 7px; background: oklch(0.
 .video-stage { display: grid; place-items: center; min-height: 260px; background: oklch(0.20 0.013 250); }
 .media-unavailable { padding: 30px; color: oklch(0.82 0.01 250); text-align: center; }
 .window-summary { padding: 4px 0; }
-.split-view { display: grid; grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.1fr); gap: 28px; margin-top: 28px; padding-top: 24px; }
-.window-list { max-height: 650px; overflow: auto; }
-.window-item { display: grid; width: 100%; gap: 4px; margin: 0; padding: 12px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink); background: transparent; text-align: left; }
-.window-item:hover, .window-item.active { color: var(--accent); background: transparent; }
-.window-item span, .window-item small { color: var(--muted); font-size: 12px; }
+.clip-section, .selected-clip { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+.clip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+.clip-card { display: grid; width: 100%; min-height: 278px; align-content: start; gap: 13px; padding: 15px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); text-align: left; transition: border-color 180ms ease-out, background 180ms ease-out, transform 180ms ease-out; }
+.clip-card:hover { border-color: oklch(0.61 0.09 238); background: oklch(0.985 0.009 238); transform: translateY(-1px); }
+.clip-card.active { border-color: var(--accent); background: oklch(0.965 0.019 238); box-shadow: 0 0 0 1px oklch(0.72 0.07 238); }
+.clip-card-heading { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+.clip-card-heading > span:first-child { display: grid; gap: 3px; }
+.clip-card-heading strong { font-size: 17px; }
+.clip-number, .clip-modality-label { color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+.clip-status { flex: 0 0 auto; border-radius: 999px; padding: 3px 7px; font-size: 11px; font-weight: 700; }
+.clip-status.ready { color: oklch(0.32 0.09 154); background: oklch(0.95 0.028 154); }
+.clip-status.quiet { color: var(--muted); background: var(--surface-muted); }
+.clip-summary { display: -webkit-box; overflow: hidden; min-height: 39px; color: var(--muted); font-size: 13px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.clip-modalities, .clip-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.clip-modality { display: grid; min-width: 0; gap: 3px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-muted); }
+.clip-modality.ready { border-color: oklch(0.80 0.05 154); }
+.clip-modality.warning { border-color: oklch(0.80 0.08 43); background: oklch(0.98 0.019 43); }
+.clip-modality strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.clip-modality-detail { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.selected-clip .section-heading { margin-bottom: 0; }
+.selected-clip .video-inspector { grid-template-columns: minmax(0, 1.35fr) minmax(290px, 0.9fr); }
+.clip-evidence-grid { align-content: start; padding: 4px 0; }
+.stored-record { margin-top: 18px; }
+.stored-record summary { cursor: pointer; color: var(--accent); font-weight: 700; }
+.stored-record dl { margin-top: 15px; }
 .stored-record dl, .search-result dl { display: grid; grid-template-columns: minmax(130px, 0.4fr) 1fr; gap: 8px 14px; margin: 0 0 18px; }
 .stored-record dt, .search-result dt { color: var(--muted); font-size: 12px; }
 .stored-record dd, .search-result dd { margin: 0; overflow-wrap: anywhere; }
 
 .search-intro { max-width: 700px; margin-bottom: 18px; }
+.search-hero h1 { max-width: 760px; }
 .search-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
 .search-form input { min-height: 44px; font-size: 16px; }
+.query-choice-panel { display: grid; gap: 14px; margin-top: 18px; padding: 18px; border: 1px solid oklch(0.80 0.035 238); background: oklch(0.985 0.008 238); }
+.query-choice-panel h2 { margin: 0 0 4px; font-size: 16px; }
+.query-choice-panel p { margin: 0; color: var(--muted); font-size: 13px; }
+.query-scope-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.scope-choice { color: var(--ink); border-color: var(--line); background: var(--surface); }
+.scope-choice.selected { color: oklch(0.99 0.004 80); border-color: var(--accent); background: var(--accent); }
+.developer-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 28px; }
+.developer-link { display: grid; gap: 8px; min-height: 150px; padding: 18px; border: 1px solid var(--line); color: var(--ink); background: var(--surface); text-decoration: none; }
+.developer-link:hover { border-color: var(--accent); color: var(--ink); background: oklch(0.985 0.008 238); text-decoration: none; }
+.developer-link span { color: var(--muted); font-size: 13px; line-height: 1.45; }
 .results-list { margin-top: 18px; }
 .search-result { padding: 23px 0; }
 .result-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; color: var(--muted); font: 12px "SFMono-Regular", Consolas, monospace; }
@@ -236,7 +267,9 @@ video { width: 100%; max-height: 510px; border-radius: 7px; background: oklch(0.
   .app-header nav { gap: 12px; }
   main { padding: 30px 18px 56px; }
   .page-heading, .status-strip, .section-heading { align-items: flex-start; flex-direction: column; }
-  .field-grid, .field-grid.compact, .provider-grid, .profile-choice, .video-inspector, .split-view, .result-body, .architecture-split, .architecture-storage, .architecture-storage-fields, .architecture-query-flow, .architecture-precision-flow { grid-template-columns: 1fr; }
+  .field-grid, .field-grid.compact, .provider-grid, .profile-choice, .video-inspector, .result-body, .architecture-split, .architecture-storage, .architecture-storage-fields, .architecture-query-flow, .architecture-precision-flow { grid-template-columns: 1fr; }
+  .clip-grid { grid-template-columns: 1fr; }
+  .developer-grid { grid-template-columns: 1fr; }
   .field-wide { grid-column: auto; }
   .index-choice { align-items: stretch; flex-direction: column; }
   .model-row { grid-template-columns: 1fr; gap: 4px; }

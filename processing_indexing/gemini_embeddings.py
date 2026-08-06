@@ -14,11 +14,18 @@ an API key.  Tests and callers can inject an ``EmbeddingTransport`` instead.
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from numbers import Real
 from pathlib import Path
 from typing import Any, Protocol
+
+from .gemini_runtime import (
+    GeminiRetryPolicy,
+    GeminiSDKUnavailableError,
+    call_with_retry,
+)
 
 GEMINI_EMBEDDING_2_MODEL = "gemini-embedding-2"
 GEMINI_EMBEDDING_DIMENSIONS = 1536
@@ -49,7 +56,7 @@ class GeminiEmbeddingResponseError(RuntimeError):
     """Raised when a provider response cannot be used as a Gemini vector."""
 
 
-class GeminiEmbeddingSDKUnavailableError(RuntimeError):
+class GeminiEmbeddingSDKUnavailableError(GeminiSDKUnavailableError):
     """Raised only when a real Google SDK transport is used without its SDK."""
 
 
@@ -406,13 +413,37 @@ class GoogleGenAIEmbeddingClient:
         client: Any | None = None,
         types_module: Any | None = None,
         sdk_loader: Callable[[], tuple[Any, Any]] | None = None,
+        retry_policy: GeminiRetryPolicy | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         self._api_key = api_key
         self._client = client
         self._types = types_module
         self._sdk_loader = sdk_loader or _load_google_sdk
+        self.retry_policy = retry_policy or GeminiRetryPolicy()
+        self._sleep = sleep
 
     def embed(
+        self,
+        content: GeminiEmbeddingContent,
+        *,
+        model: str,
+        dimensions: int,
+    ) -> list[float]:
+        values, _diagnostics = call_with_retry(
+            lambda: self._embed_once(
+                content,
+                model=model,
+                dimensions=dimensions,
+            ),
+            policy=self.retry_policy,
+            model=model,
+            operation_name=f"embed_{content.modality}",
+            sleep=self._sleep,
+        )
+        return values
+
+    def _embed_once(
         self,
         content: GeminiEmbeddingContent,
         *,
