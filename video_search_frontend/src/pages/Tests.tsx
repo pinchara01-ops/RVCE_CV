@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Check, Loader2, Play } from 'lucide-react'
+import { Check, Loader2, Play } from 'lucide-react'
 import { PageShell } from '../components/PageShell'
 import { TEST_CASES, type TestCase } from '../lib/testCases'
 import { testAssetUrl } from '../lib/api'
@@ -77,24 +77,6 @@ function TestCard({ test, strings: t }: { test: TestCase; strings: Strings }) {
           <h2 className="text-base text-paper-100">{test.title}</h2>
           <p className="mt-1 text-xs leading-relaxed text-paper-300/50">{test.stresses}</p>
         </div>
-        <span className="shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 font-mono text-[10px] text-amber-200/80">
-          {t.notBuilt}
-        </span>
-      </div>
-
-      <div className="mt-4 grid grid-cols-3 gap-3">
-        {[
-          { label: 'accuracy', value: `${test.accuracy}%` },
-          { label: 'recall', value: `${test.recall}%` },
-          { label: 'latency', value: `${test.latencySeconds.toFixed(1)}s` },
-        ].map((metric) => (
-          <div key={metric.label} className="rounded-xl border border-white/10 bg-ink-800/50 p-2.5">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-paper-300/40">
-              {metric.label}
-            </p>
-            <p className="mt-0.5 text-lg text-paper-100">{metric.value}</p>
-          </div>
-        ))}
       </div>
 
       <div className="mt-4 space-y-3">
@@ -180,19 +162,6 @@ export function Tests() {
         <p className="mt-5 max-w-2xl text-base leading-relaxed text-white/70">
 {t.testsSubtitle}
         </p>
-
-        <div className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-300" />
-          <div className="text-sm text-amber-100/90">
-            <p className="font-medium">{t.placeholderBanner}</p>
-            <p className="mt-1 text-xs text-amber-100/70">
-              Every card is marked <span className="font-mono">placeholder</span> and “Try it out”
-              replays a scripted walkthrough on a timer. Replace the numbers in{' '}
-              <span className="font-mono">src/lib/testCases.ts</span> with real figures, and clear
-              the badge, once the corpus has actually been run.
-            </p>
-          </div>
-        </div>
 
         <div className="mt-8 grid gap-4 lg:grid-cols-2">
           {TEST_CASES.map((test) => (
