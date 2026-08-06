@@ -1,11 +1,14 @@
 import { useEffect, useRef } from 'react'
 
-// Preferred: a local copy in public/, so the hero renders instantly and works
-// offline. That file is gitignored (20 MB), so a fresh clone or a deploy will
-// not have it; the CDN copy is the fallback for those.
-const LOCAL_SRC = '/hero.mp4'
 const REMOTE_SRC =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_115001_bcdaa3b4-03de-47e7-ad63-ae3e392c32d4.mp4'
+const LOCAL_SRC = '/hero.mp4'
+
+// The local copy is gitignored (20 MB), so it exists in development but never
+// in a deployment. Choosing by build mode rather than by load failure is
+// deliberate: a SPA rewrite answers /hero.mp4 with index.html and HTTP 200, so
+// a missing file does not reliably raise an error to fall back from.
+const VIDEO_SRC = import.meta.env.DEV ? LOCAL_SRC : REMOTE_SRC
 
 const FADE_IN_MS = 600
 
@@ -42,9 +45,10 @@ export function BackgroundVideo() {
     <video
       ref={videoRef}
       className="absolute inset-0 h-full w-full translate-y-[17%] object-cover"
-      src={LOCAL_SRC}
+      src={VIDEO_SRC}
       onError={(event) => {
-        // Local copy absent (fresh clone or deploy): fall back to the CDN.
+        // Belt and braces: if the local copy is missing in development, use the
+        // CDN rather than showing a black hero.
         const element = event.currentTarget
         if (!element.src.includes('cloudfront')) element.src = REMOTE_SRC
       }}
