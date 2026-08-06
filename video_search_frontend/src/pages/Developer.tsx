@@ -1,4 +1,5 @@
-import { Check, Cloud, KeyRound, Server } from 'lucide-react'
+import { useState } from 'react'
+import { Check, Cloud, KeyRound, Plus, Server, Trash2 } from 'lucide-react'
 import { PageShell } from '../components/PageShell'
 import {
   INDEX_MODELS,
@@ -11,6 +12,8 @@ import {
   useQdrantTarget,
   useLanguage,
   resetOnboarding,
+  useCustomModels,
+  type CustomModel,
   sessionId,
   type ModelChoice,
 } from '../lib/settings'
@@ -135,6 +138,85 @@ function KeyField({ provider, label }: { provider: string; label: string }) {
         )}
       </div>
     </label>
+  )
+}
+
+function CustomModels() {
+  const [models, save] = useCustomModels()
+  const [draft, setDraft] = useState<CustomModel>({ id: '', label: '', endpoint: '', apiKey: '' })
+
+  const add = () => {
+    if (!draft.id.trim() || !draft.endpoint.trim()) return
+    save([...models, { ...draft, label: draft.label.trim() || draft.id.trim() }])
+    setDraft({ id: '', label: '', endpoint: '', apiKey: '' })
+  }
+
+  return (
+    <div>
+      {models.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {models.map((model, index) => (
+            <div
+              key={`${model.id}-${index}`}
+              className="flex items-center gap-3 rounded-xl border border-white/10 bg-ink-800/60 px-3 py-2.5"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm text-paper-100">{model.label}</p>
+                <p className="truncate font-mono text-[10px] text-paper-300/40">
+                  {model.id} · {model.endpoint}
+                  {model.apiKey ? ' · key set' : ' · no key'}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Remove model"
+                onClick={() => save(models.filter((_, position) => position !== index))}
+                className="shrink-0 text-paper-300/40 transition-colors hover:text-red-300"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        {[
+          { key: 'id' as const, label: 'Model name', placeholder: 'llama-3.3-70b' },
+          { key: 'label' as const, label: 'Display name', placeholder: 'Llama 3.3 70B (local)' },
+          { key: 'endpoint' as const, label: 'Endpoint', placeholder: 'http://localhost:11434/v1' },
+          { key: 'apiKey' as const, label: 'API key', placeholder: 'Optional for local', secret: true },
+        ].map((field) => (
+          <label key={field.key} className="block">
+            <span className="text-[11px] text-paper-300/55">{field.label}</span>
+            <input
+              type={'secret' in field && field.secret ? 'password' : 'text'}
+              value={draft[field.key]}
+              onChange={(event) => setDraft({ ...draft, [field.key]: event.target.value })}
+              placeholder={field.placeholder}
+              autoComplete="off"
+              spellCheck={false}
+              className="mt-1 w-full rounded-lg border border-white/10 bg-ink-900/60 px-2.5 py-2 text-sm text-paper-100 outline-none placeholder:text-paper-300/25"
+            />
+          </label>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={add}
+        disabled={!draft.id.trim() || !draft.endpoint.trim()}
+        className="mt-3 flex items-center gap-2 rounded-xl border border-white/15 px-4 py-2 text-sm text-paper-300/80 transition-colors hover:border-white/30 hover:text-paper-100 disabled:opacity-40"
+      >
+        <Plus size={14} />
+        Add model
+      </button>
+
+      <p className="mt-2 text-[10px] leading-relaxed text-paper-300/40">
+        Any OpenAI-compatible endpoint works: vLLM, Ollama, LM Studio, Together, Groq, or a private
+        deployment. Registered models appear alongside the built-in ones.
+      </p>
+    </div>
   )
 }
 
@@ -284,6 +366,13 @@ export function Developer() {
           >
             <ModelList options={INDEX_MODELS} value={indexModel} onChange={setIndexModel} />
             <p className="mt-3 font-mono text-[11px] text-paper-300/40">{t.activeLabel}: {indexModel}</p>
+          </Panel>
+
+          <Panel
+            title="Custom models"
+            hint="Bring your own model. Anything speaking the OpenAI chat format can be registered without a code change."
+          >
+            <CustomModels />
           </Panel>
 
           <Panel

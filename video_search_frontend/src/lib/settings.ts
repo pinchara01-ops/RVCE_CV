@@ -239,3 +239,46 @@ export function sessionId(): string {
   }
   return existing
 }
+
+// Custom models. Any OpenAI-compatible endpoint can be registered here, which
+// is what makes the provider layer genuinely open rather than a fixed list:
+// vLLM, Ollama, LM Studio, Together, Groq, or a private deployment.
+export interface CustomModel {
+  id: string
+  label: string
+  endpoint: string
+  apiKey: string
+}
+
+const CUSTOM_MODELS_KEY = 'footageask.customModels'
+
+export function getCustomModels(): CustomModel[] {
+  try {
+    const raw = window.sessionStorage.getItem(CUSTOM_MODELS_KEY)
+    return raw ? (JSON.parse(raw) as CustomModel[]) : []
+  } catch {
+    return []
+  }
+}
+
+export function saveCustomModels(models: CustomModel[]): void {
+  try {
+    window.sessionStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(models))
+  } catch {
+    // Best effort.
+  }
+  broadcast()
+}
+
+export function useCustomModels() {
+  const [models, setModels] = useState<CustomModel[]>([])
+
+  useEffect(() => {
+    setModels(getCustomModels())
+    const sync = () => setModels(getCustomModels())
+    window.addEventListener(CHANGE_EVENT, sync)
+    return () => window.removeEventListener(CHANGE_EVENT, sync)
+  }, [])
+
+  return [models, saveCustomModels] as const
+}
