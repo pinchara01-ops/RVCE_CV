@@ -5,7 +5,6 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "//": "Route app paths to the SPA, but never a path with a file extension. Rewriting those would answer a missing asset with index.html and HTTP 200, hiding the 404 and breaking media elements.",
       "source": "/((?!api/)(?!.*\\.[a-zA-Z0-9]+$).*)",
       "destination": "/index.html"
     }
