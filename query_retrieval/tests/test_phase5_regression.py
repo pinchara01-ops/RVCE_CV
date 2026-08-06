@@ -150,6 +150,7 @@ def perf_api_client(monkeypatch):
         yield c
 
 
+@pytest.mark.qdrant
 def test_search_at_scale_completes_and_produces_sane_merge_count(perf_collection, perf_api_client):
     start = time.perf_counter()
     resp = perf_api_client.post("/search", json={"query": "anything", "top_k": _TOTAL_WINDOWS})
@@ -170,12 +171,14 @@ def test_search_at_scale_completes_and_produces_sane_merge_count(perf_collection
     assert duration < 10.0, f"/search over {_TOTAL_WINDOWS} windows took {duration:.3f}s - unexpectedly slow"
 
 
+@pytest.mark.qdrant
 def test_top_k_zero_still_empty_at_scale_post_merge(perf_collection, perf_api_client):
     resp = perf_api_client.post("/search", json={"query": "anything", "top_k": 0})
     assert resp.status_code == 200
     assert resp.json()["results"] == []
 
 
+@pytest.mark.qdrant
 def test_top_k_very_large_bounded_by_actual_merged_regions_not_raw_windows(perf_collection, perf_api_client):
     resp = perf_api_client.post("/search", json={"query": "anything", "top_k": 10000})
     assert resp.status_code == 200

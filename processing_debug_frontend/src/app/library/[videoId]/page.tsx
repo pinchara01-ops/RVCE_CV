@@ -143,26 +143,28 @@ function VideoLibraryContent() {
       return () => window.clearTimeout(reset);
     }
     let cancelled = false;
-    setError("");
     // Loading every high-dimensional vector in a video makes the inspector
     // slow on a laptop. List the lightweight records first, then fetch the
     // selected record with its vector summaries below.
-    jsonFetch<{ windows: IndexedWindow[] }>(
-      `/api/index/windows?video_id=${encodeURIComponent(videoId)}&limit=500&vectors=false${profileQuery}`,
-    )
-      .then((data) => {
-        if (cancelled) return;
-        setWindows(data.windows);
-        setSelected(data.windows[0]?.payload.window_id);
-        setSelectedDetail(undefined);
-      })
-      .catch((cause) => {
-        if (!cancelled) {
-          setError(apiErrorMessage(cause));
-          void loadDiagnostics();
-        }
-      });
-    return () => { cancelled = true; };
+    const request = window.setTimeout(() => {
+      setError("");
+      jsonFetch<{ windows: IndexedWindow[] }>(
+        `/api/index/windows?video_id=${encodeURIComponent(videoId)}&limit=500&vectors=false${profileQuery}`,
+      )
+        .then((data) => {
+          if (cancelled) return;
+          setWindows(data.windows);
+          setSelected(data.windows[0]?.payload.window_id);
+          setSelectedDetail(undefined);
+        })
+        .catch((cause) => {
+          if (!cancelled) {
+            setError(apiErrorMessage(cause));
+            void loadDiagnostics();
+          }
+        });
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(request); };
   }, [videoId, profileQuery, requestedProfileId, runtimeSession, runtimeSessionState, loadDiagnostics]);
 
   useEffect(() => {

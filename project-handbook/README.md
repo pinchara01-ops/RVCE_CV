@@ -14,6 +14,7 @@ and first use.
 | Understand the browser experience | [Interaction design](design/interaction-design.md) | [Acceptance test cases](delivery/acceptance-test-cases.md) |
 | Evaluate libraries, tools, cost, and operational dependence | [Dependency register](reference/dependency-register.md) | [Runtime configuration](reference/runtime-configuration.md) |
 | Run or review quality checks | [Engineering process](delivery/engineering-process.md) | [Acceptance test plan](delivery/acceptance-test-plan.md) |
+| Review every assessment requirement with evidence | [Rubric evidence matrix](delivery/rubric-evidence-matrix.md) | [Acceptance test cases](delivery/acceptance-test-cases.md) |
 
 ## Evidence and terminology
 

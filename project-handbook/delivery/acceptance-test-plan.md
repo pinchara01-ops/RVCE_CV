@@ -59,8 +59,8 @@ require the separate local or cloud acceptance runs defined below.
 |---|---|---|---|
 | Pure unit | Deterministic functions and validation contracts | Windowing, schema validation, selection, fusion, merge, metrics, and parsing tests | Real media/model/provider behaviour |
 | Adapter and API contract | Public status, profile, response, redaction, and error behaviour using injected seams | FastAPI `TestClient` tests, profile/session tests, Gemini/Qdrant adapter tests | A live provider account, local model cache, or Cloud collection |
-| Local integration | Qdrant query schema, collection creation, bounded search, and merge behaviour against a local test collection | `query_retrieval/tests/test_integration.py`, `test_phase5_regression.py`, and store tests | End-to-end semantic quality on a real video |
-| Browser quality | Client-side filtering and build/static checks | Vitest filter tests, ESLint, TypeScript, Next build | Full browser automation or assistive-technology certification |
+| Local integration | Qdrant query schema, collection creation, bounded search, and merge behaviour against a local test collection | `query_retrieval/tests/test_integration.py`, `test_comprehensive.py`, `test_phase5_regression.py`, and `test_qdrant_client.py` are explicitly marked `qdrant` | End-to-end semantic quality on a real video |
+| Browser quality | Client-side filtering and build/static checks | Vitest filter tests, ESLint, TypeScript, Next build; all executed in the repository quality workflow | Full browser automation or assistive-technology certification |
 | Manual end-to-end | The actual route/profile/model/device/user journey | Cases in [Acceptance test cases](acceptance-test-cases.md) | Repeatability unless recorded with the supplied evidence template |
 | Controlled cloud smoke | Consent, API session, Qdrant Cloud, quota/error handling, and a small isolated collection | Manual run with a disposable test video and cloud account | A free-tier capacity promise or production load test |
 
@@ -153,8 +153,15 @@ already passed for every environment.
 # Python contract and mocked tests
 python -m pytest processing_indexing/tests -m "not integration"
 
-# Retrieval tests may use the isolated local Qdrant test collection.
-python -m pytest query_retrieval/tests -q
+# Offline retrieval contracts: intentionally exclude tests that recreate a
+# local Qdrant collection. This works without Docker.
+python -m pytest query_retrieval/tests -m "not qdrant" -q
+
+# Qdrant integration: the marked tests use only video_windows_query_test.
+# --require-qdrant makes a missing/unhealthy database a clear failure rather
+# than a misleading timeout or skipped integration claim.
+docker compose up -d qdrant
+python -m pytest query_retrieval/tests -m qdrant -q --require-qdrant
 
 # Browser quality checks
 Set-Location processing_debug_frontend
@@ -164,8 +171,10 @@ npm run typecheck
 npm run build
 ```
 
-Before the second command, start local Qdrant when the applicable retrieval
-tests need it. The repository's explicitly marked real-stack test is a
+Before the Qdrant command, start local Qdrant. The root test hook performs a
+short read-only `/readyz` probe and deliberately redacts URL credentials,
+paths, and query strings from any public failure message. The repository's
+explicitly marked real-stack test is a
 documented opt-in placeholder and currently skips until a real video, cached
 models, and Qdrant fixture are intentionally supplied. It must not be counted
 as live end-to-end evidence.

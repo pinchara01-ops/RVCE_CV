@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from qdrant_client import QdrantClient as RealQdrantClient
 
+import query_retrieval.qdrant_client as qdrant_client_module
 from query_retrieval import api, config, encoders
 from query_retrieval.qdrant_client import (
     connect_qdrant,
@@ -22,7 +23,7 @@ from query_retrieval.seed_dummy_data import (
     seed,
 )
 
-import query_retrieval.qdrant_client as qdrant_client_module
+pytestmark = pytest.mark.qdrant
 
 
 @pytest.fixture(scope="module", autouse=True)
