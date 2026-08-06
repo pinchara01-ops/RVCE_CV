@@ -45,6 +45,7 @@ export interface Strings {
   startOver: string
   navHowItWorks: string
   navUpload: string
+  navDesign: string
   navTests: string
   navDeveloper: string
   matchSuffix: string
@@ -168,6 +169,7 @@ const en: Strings = {
   startOver: 'Start over',
   navHowItWorks: 'How it works',
   navUpload: 'Preprocess',
+  navDesign: 'Design',
   navTests: 'Tests',
   navDeveloper: 'Developer',
   matchSuffix: 'match',
@@ -258,6 +260,7 @@ const en: Strings = {
 
 const hi: Strings = {
   ...en,
+  navDesign: 'डिज़ाइन',
   buildIndexTitle: 'सूचकांक',
   buildIndexEmphasis: 'बनाएँ',
   buildIndexSubtitle: 'लंबा फुटेज अपलोड करें और उसे समय-संरेखित, खोजने योग्य विंडो में बदलते देखें। डेवलपर सेटिंग्स में चुने गए मॉडल का उपयोग होता है।',
@@ -352,6 +355,7 @@ const hi: Strings = {
 
 const kn: Strings = {
   ...en,
+  navDesign: 'ವಿನ್ಯಾಸ',
   buildIndexTitle: 'ಸೂಚಿಕೆ',
   buildIndexEmphasis: 'ರಚಿಸಿ',
   buildIndexSubtitle: 'ದೀರ್ಘ ದೃಶ್ಯಾವಳಿ ಅಪ್‌ಲೋಡ್ ಮಾಡಿ ಮತ್ತು ಅದು ಸಮಯ-ಹೊಂದಿಕೆಯ, ಹುಡುಕಬಹುದಾದ ವಿಂಡೋಗಳಾಗುವುದನ್ನು ನೋಡಿ.',
@@ -446,6 +450,7 @@ const kn: Strings = {
 
 const bn: Strings = {
   ...en,
+  navDesign: 'নকশা',
   productName: 'অ্যাপারচার',
   navQuery: 'অনুসন্ধান',
   nativeName: 'বাংলা',
@@ -492,6 +497,7 @@ const bn: Strings = {
 
 const ta: Strings = {
   ...en,
+  navDesign: 'வடிவமைப்பு',
   buildIndexTitle: 'அட்டவணையை',
   buildIndexEmphasis: 'உருவாக்கு',
   buildIndexSubtitle: 'நீண்ட காணொளியைப் பதிவேற்றி, அது நேர-சீரமைக்கப்பட்ட, தேடக்கூடிய சாளரங்களாக மாறுவதைப் பாருங்கள்.',
@@ -586,6 +592,7 @@ const ta: Strings = {
 
 const te: Strings = {
   ...en,
+  navDesign: 'డిజైన్',
   productName: 'అపర్చर్',
   navQuery: 'శోధన',
   nativeName: 'తెలుగు',
@@ -672,6 +679,7 @@ const gu: Strings = {
 
 const ml: Strings = {
   ...en,
+  navDesign: 'ഡിസൈൻ',
   productName: 'അപ്പർച്ചർ',
   navQuery: 'തിരയൽ',
   nativeName: 'മലയാളം',
@@ -714,6 +722,7 @@ const pa: Strings = {
 
 const or_: Strings = {
   ...en,
+  navDesign: 'ଡିଜାଇନ',
   productName: 'ଆପରଚର',
   navQuery: 'ସନ୍ଧାନ',
   nativeName: 'ଓଡ଼ିଆ',
@@ -736,6 +745,7 @@ const or_: Strings = {
 
 const ur: Strings = {
   ...en,
+  navDesign: 'ڈیزائن',
   productName: 'اپرچر',
   navQuery: 'تلاش',
   nativeName: 'اردو',

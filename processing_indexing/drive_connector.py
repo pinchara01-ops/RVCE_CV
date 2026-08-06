@@ -92,15 +92,11 @@ def _get(url: str, timeout: int = 60) -> bytes:
         raise HTTPException(status_code=502, detail=f"Could not reach Drive: {exc}") from exc
 
 
-@router.post("/list")
-def list_drive_videos(
-    folder: str = Form(...),
-    api_key: str | None = Form(None),
-) -> dict[str, object]:
+def list_drive_videos(*, folder: str, api_key: str) -> dict[str, object]:
     """List the video files in a link-shared Drive folder."""
 
     folder_id = parse_folder_id(folder)
-    key = _api_key(api_key)
+    key = api_key
 
     query = urllib.parse.urlencode(
         {
@@ -130,6 +126,14 @@ def list_drive_videos(
         )
 
     return {"folder_id": folder_id, "count": len(files), "files": files}
+
+
+@router.post("/list")
+def list_drive_videos_route(
+    folder: str = Form(...),
+    api_key: str | None = Form(None),
+) -> dict[str, object]:
+    return list_drive_videos(folder=folder, api_key=_api_key(api_key))
 
 
 def fetch_drive_file(file_id: str, destination: Path, api_key: str) -> None:

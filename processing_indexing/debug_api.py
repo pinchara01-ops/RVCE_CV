@@ -40,6 +40,7 @@ from .probe import VideoProbeError
 from .quick_demo import router as quick_demo_router
 from .quick_index import router as quick_index_router
 from .drive_connector import router as drive_router
+from .drive_library import router as drive_library_router
 from .runtime_profiles import (
     RuntimeProfileError,
     get_profile,
@@ -100,6 +101,7 @@ query_api.set_runtime_session_resolver(runtime_sessions.get_runtime_config)
 app.include_router(quick_demo_router)
 app.include_router(quick_index_router)
 app.include_router(drive_router)
+app.include_router(drive_library_router)
 
 # Local evaluation corpus, served read-only so the Tests page can play the
 # actual files it describes.

@@ -8,6 +8,7 @@ const LINKS = [
   { path: '/', key: 'navQuery' as const },
   { path: '/how-it-works', key: 'navHowItWorks' as const },
   { path: '/preprocess', key: 'navUpload' as const },
+  { path: '/design', key: 'navDesign' as const },
   { path: '/tests', key: 'navTests' as const },
   { path: '/developer', key: 'navDeveloper' as const },
 ]

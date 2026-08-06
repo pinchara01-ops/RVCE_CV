@@ -58,6 +58,7 @@ _INDEX_SCHEMA: dict[str, Any] = {
                     "audio_events": {"type": "array", "items": {"type": "string"}},
                     "objects": {"type": "array", "items": {"type": "string"}},
                     "actions": {"type": "array", "items": {"type": "string"}},
+                    "search_terms": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": [
                     "start_seconds",
@@ -67,6 +68,7 @@ _INDEX_SCHEMA: dict[str, Any] = {
                     "audio_events",
                     "objects",
                     "actions",
+                    "search_terms",
                 ],
             },
         },
@@ -120,6 +122,14 @@ def _index_prompt(duration: float | None) -> str:
             "hot pink are different. Where similar items appear together, name "
             "them separately rather than grouping them.",
             "- actions: activities taking place, described concretely.",
+            "- search_terms: 10-20 other words and short phrases someone might "
+            "plausibly type when looking for this window. Include synonyms and "
+            "everyday alternatives for what you named above (laptop / computer / "
+            "notebook), broader categories the things belong to (sedan / car / "
+            "vehicle), the activity in other words (running / sprinting / "
+            "fleeing), and the setting. Retrieval is literal word matching, so a "
+            "word you omit here is a search that will not find this window. Only "
+            "list terms that genuinely describe what is present.",
             "",
             SHARED_EDGE_CASES,
             "",
@@ -140,11 +150,118 @@ def _placeholder_vector(seed: str, dimensions: int) -> dict[str, Any]:
     }
 
 
+def _strings_long(item: dict[str, Any], key: str) -> list[str]:
+    """Like _strings but keeps a longer tail: these exist purely for recall."""
+
+    value = item.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(entry).strip() for entry in value if str(entry).strip()][:24]
+
+
 def _strings(item: dict[str, Any], key: str) -> list[str]:
     value = item.get(key)
     if not isinstance(value, list):
         return []
     return [str(entry).strip() for entry in value if str(entry).strip()][:8]
+
+
+
+def index_video_file(
+    *,
+    source: Path,
+    duration: float | None,
+    api_key: str,
+    model: str,
+    language: str,
+    workspace: Path,
+) -> dict[str, Any]:
+    """Index one already-downloaded video. Shared by the upload and Drive paths."""
+
+    prompt = _index_prompt(duration) + _language_clause(language)
+
+    if is_openai_model(model):
+        frames = sample_frames(source, duration, workspace)
+        try:
+            payload = openai_generate_moments(
+                api_key=api_key,
+                model=model,
+                prompt=prompt,
+                frames=frames,
+                response_schema=_INDEX_SCHEMA,
+            )
+        except OpenAIRuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        provider, frames_sampled = "openai", len(frames)
+    else:
+        runtime = GoogleGenAIRuntime(api_key=api_key)
+        try:
+            payload, _ = runtime.generate_json(
+                model=model,
+                prompt=prompt,
+                media_path=source,
+                media_mime_type=_VIDEO_MIME.get(source.suffix.lower(), "video/mp4"),
+                response_schema=_INDEX_SCHEMA,
+                operation_name="quick_index",
+            )
+        except GeminiRuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        provider, frames_sampled = "gemini", 0
+
+    request_id = uuid.uuid4().hex
+    raw_windows = payload.get("windows")
+    windows: list[dict[str, Any]] = []
+    if isinstance(raw_windows, list):
+        for position, item in enumerate(raw_windows):
+            if not isinstance(item, dict):
+                continue
+            try:
+                start = float(item.get("start_seconds"))
+                end = float(item.get("end_seconds"))
+            except (TypeError, ValueError):
+                continue
+            if not (math.isfinite(start) and math.isfinite(end)) or not (end > start >= 0):
+                continue
+            if duration is not None:
+                if start >= duration:
+                    continue
+                end = min(end, duration)
+
+            caption = str(item.get("caption") or "").strip()
+            transcript = str(item.get("transcript") or "").strip()
+            window_id = f"{request_id[:8]}_w{position:03d}"
+            windows.append(
+                {
+                    "window_id": window_id,
+                    "start": round(start, 2),
+                    "end": round(end, 2),
+                    "caption": caption,
+                    "transcript": transcript,
+                    "audio_events": _strings(item, "audio_events"),
+                    "objects": _strings(item, "objects"),
+                    "actions": _strings(item, "actions"),
+                    "search_terms": _strings_long(item, "search_terms"),
+                    "vectors": {
+                        "visual": _placeholder_vector(window_id + caption, 512),
+                        "audio_event": _placeholder_vector(window_id + "audio", 512),
+                        "speech_text": _placeholder_vector(window_id + transcript, 1024),
+                        "vlm_text": _placeholder_vector(window_id + "vlm", 1024),
+                    },
+                }
+            )
+    windows.sort(key=lambda entry: entry["start"])
+
+    return {
+        "request_id": request_id,
+        "model": model,
+        "provider": provider,
+        "frames_sampled": frames_sampled,
+        "duration_seconds": round(duration, 2) if duration else None,
+        "summary": str(payload.get("summary") or "").strip(),
+        "window_count": len(windows),
+        "windows": windows,
+        "vectors_are_placeholder": True,
+    }
 
 
 @router.post("/index")
@@ -245,6 +362,7 @@ async def quick_index(
                     "audio_events": _strings(item, "audio_events"),
                     "objects": _strings(item, "objects"),
                     "actions": _strings(item, "actions"),
+                    "search_terms": _strings_long(item, "search_terms"),
                     "vectors": {
                         "visual": _placeholder_vector(window_id + caption, 512),
                         "audio_event": _placeholder_vector(window_id + "audio", 512),
