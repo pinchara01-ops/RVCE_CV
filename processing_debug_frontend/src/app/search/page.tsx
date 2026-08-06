@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import {
   API,
+  Job,
   SearchDecomposition,
   SearchRequest,
   SearchResponse,
@@ -129,8 +130,13 @@ export default function SearchPage() {
   const [enableReranking, setEnableReranking] = useState(true);
   const [rerankerProvider, setRerankerProvider] = useState<"none" | "local_qwen">("none");
   const [profiles, setProfiles] = useState<RuntimeProfile[]>([]);
-  const [profileId, setProfileId] = useState("self-hosted-v1");
+  const [profileId, setProfileId] = useState("api-gemini-free-v1");
   const [runtimeSession, setRuntimeSession] = useState<RuntimeSession>();
+  const [showSearchChoices, setShowSearchChoices] = useState(false);
+  const [additionalInfo, setAdditionalInfo] = useState("");
+  const [searchScope, setSearchScope] = useState<"library" | "video">("library");
+  const [additionalVideo, setAdditionalVideo] = useState<File>();
+  const [indexingMessage, setIndexingMessage] = useState("");
   const activeProfile = profiles.find((profile) => profile.id === profileId);
   const isApiBased = activeProfile?.mode === "api-based" || activeProfile?.mode === "api_based" || profileId === "api-gemini-free-v1";
   const runtimeSessionId = loadRuntimeSessionId();
@@ -176,9 +182,36 @@ export default function SearchPage() {
       .catch(() => setRuntimeSession(undefined));
   }, [runtimeSessionId]);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!query.trim()) return;
+  async function indexAdditionalVideo(file: File): Promise<void> {
+    if (!isApiBased || !sessionMatchesProfile || !runtimeSessionId) {
+      throw new Error("Add-video search uses the active API setup. Open Developer options to connect Gemini and Qdrant first.");
+    }
+    setIndexingMessage("Uploading and indexing the added video…");
+    const body = new FormData();
+    body.append("video", file, file.name || "query-video.mp4");
+    body.append("configuration", JSON.stringify({
+      profile_id: profileId,
+      runtime_session_id: runtimeSessionId,
+      window_seconds: 20,
+      stride_seconds: 10,
+      max_windows: 0,
+      index_qdrant: true,
+    }));
+    const response = await fetch(`${API}/api/processing/jobs`, { method: "POST", body });
+    if (!response.ok) throw new Error(await response.text());
+    const created = await response.json() as Pick<Job, "job_id">;
+    for (let attempt = 0; attempt < 1800; attempt += 1) {
+      const job = await jsonFetch<Job>(`/api/processing/jobs/${encodeURIComponent(created.job_id)}`);
+      setIndexingMessage(`Indexing added video: ${Math.round(job.progress * 100)}% · ${job.stage}`);
+      if (["complete", "completed", "partial", "completed_with_errors"].includes(job.status)) return;
+      if (["failed", "cancelled", "canceled"].includes(job.status)) throw new Error("The added video could not be indexed. Review Processing diagnostics and retry.");
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    throw new Error("Indexing the added video timed out. Check Processing for the job status.");
+  }
+
+  async function runSearch() {
+    const queryText = [query.trim(), additionalInfo.trim() ? `Additional context: ${additionalInfo.trim()}` : ""].filter(Boolean).join("\n");
     if (!isApiBased && effectiveVerificationProvider !== "none" && !verificationApiKey.trim()) {
       setError("Enter an API key for the selected verification provider, or choose no verification.");
       return;
@@ -194,7 +227,7 @@ export default function SearchPage() {
     setDecomposition(undefined);
     setDiagnostics(undefined);
     const payload: SearchRequest = {
-      query: query.trim(),
+      query: queryText,
       top_k: 8,
       // The API profile always creates its four modality-specific prompts.
       enable_decomposition: isApiBased || enableDecomposition,
@@ -231,44 +264,56 @@ export default function SearchPage() {
       // The value is never persisted and is cleared when this request completes.
       setVerificationApiKey("");
       setSearching(false);
+      setIndexingMessage("");
+    }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!query.trim()) return;
+    if (!showSearchChoices) {
+      setShowSearchChoices(true);
+      return;
+    }
+    setSearching(true);
+    setError("");
+    try {
+      if (searchScope === "video") {
+        if (!additionalVideo) throw new Error("Choose an additional video, or switch back to the existing library.");
+        await indexAdditionalVideo(additionalVideo);
+      }
+      await runSearch();
+    } catch (cause) {
+      setError(apiErrorMessage(cause));
+      setSearching(false);
+      setIndexingMessage("");
     }
   }
 
   return (
     <main>
-      <div className="page-heading">
-        <div><p className="eyebrow">Step 3 of 3</p><h1>Search indexed videos</h1></div>
+      <div className="page-heading search-hero">
+        <div><p className="eyebrow">Multimodal video search</p><h1>Find the moment that matters.</h1></div>
         <Link className="secondary button" href={`/library${profileQuery}`}>Browse library</Link>
       </div>
-      <p className="muted search-intro">Search across visual, audio, speech, and caption vectors. The first search loads query models, so it can take several minutes on a fresh machine.</p>
-
-      <section className="form-section">
-        <div className="section-heading"><h2>Search profile</h2><p>{isApiBased ? "Uses the active API session, its selected Qdrant target, and the compatible four-vector embedding profile." : "Uses local query models and the local Qdrant collection."}</p></div>
-        <label className="field">
-          Indexed embedding profile
-          <select value={profileId} onChange={(event) => {
-            const next = event.target.value;
-            setProfileId(next);
-            const api = next === "api-gemini-free-v1";
-            setEnableDecomposition(api || enableDecomposition);
-            setVerificationProvider(api ? "gemini" : "none");
-            setVerificationApiKey("");
-            if (!api) setRerankerProvider("none");
-          }}>
-            {(profiles.length ? profiles : [
-              { id: "self-hosted-v1", label: "Self-hosted", mode: "self-hosted" },
-              { id: "api-gemini-free-v1", label: "API-based (Gemini)", mode: "api-based" },
-            ]).map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}
-          </select>
-          {isApiBased && <span>{sessionMatchesProfile ? "Active API session found; keys stay in the backend." : "No active API session. Return to Architecture to configure Qdrant and Gemini."}</span>}
-        </label>
-      </section>
+      <p className="muted search-intro">Default: Gemini Embedding 2, Gemini Flash-Lite, and the active Qdrant API session. {sessionMatchesProfile ? "Connected and ready." : "Connect the API session in Developer options before searching."}</p>
 
       <form className="processing-form" onSubmit={submit}>
         <div className="search-form">
           <input aria-label="Search indexed video" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. a person moves a red box" />
-          <button className="button" disabled={searching}>{searching ? "Searching and verifying…" : "Search library"}</button>
+          <button className="button" disabled={searching}>{searching ? (indexingMessage || "Searching…") : showSearchChoices ? (searchScope === "video" ? "Index and search" : "Search library") : "Continue"}</button>
         </div>
+        {showSearchChoices && <section className="query-choice-panel">
+          <div><h2>Do you want to provide any additional info?</h2><p>Optional context improves query expansion. It is sent only with this search.</p></div>
+          <textarea value={additionalInfo} onChange={(event) => setAdditionalInfo(event.target.value)} placeholder="e.g. the incident happened near an ATM after midnight" />
+          <div><h2>What should I search?</h2><p>Search the existing library, or add one video and index it before searching.</p></div>
+          <div className="query-scope-actions">
+            <button type="button" className={searchScope === "library" ? "scope-choice selected" : "scope-choice"} onClick={() => setSearchScope("library")}>Search existing library</button>
+            <button type="button" className={searchScope === "video" ? "scope-choice selected" : "scope-choice"} onClick={() => setSearchScope("video")}>Add a video, then search</button>
+          </div>
+          {searchScope === "video" && <label className="field">Additional video<input type="file" accept="video/*" onChange={(event) => setAdditionalVideo(event.target.files?.[0])} /><span>It is indexed into the active API profile with 20-second windows before this query runs.</span></label>}
+          {indexingMessage && <p className="runtime-message">{indexingMessage}</p>}
+        </section>}
         <section className="form-section">
           <div className="section-heading"><h2>Search options</h2><p>{isApiBased ? "Vector recall, cross-encoder reranking, and final verification are bounded to the retrieved candidates." : "Verification runs only for this request. Keys are never saved in the browser."}</p></div>
           <div className="field-grid">

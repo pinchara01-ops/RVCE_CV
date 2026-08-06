@@ -204,8 +204,19 @@ video { width: 100%; max-height: 510px; border-radius: 7px; background: oklch(0.
 .stored-record dd, .search-result dd { margin: 0; overflow-wrap: anywhere; }
 
 .search-intro { max-width: 700px; margin-bottom: 18px; }
+.search-hero h1 { max-width: 760px; }
 .search-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
 .search-form input { min-height: 44px; font-size: 16px; }
+.query-choice-panel { display: grid; gap: 14px; margin-top: 18px; padding: 18px; border: 1px solid oklch(0.80 0.035 238); background: oklch(0.985 0.008 238); }
+.query-choice-panel h2 { margin: 0 0 4px; font-size: 16px; }
+.query-choice-panel p { margin: 0; color: var(--muted); font-size: 13px; }
+.query-scope-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.scope-choice { color: var(--ink); border-color: var(--line); background: var(--surface); }
+.scope-choice.selected { color: oklch(0.99 0.004 80); border-color: var(--accent); background: var(--accent); }
+.developer-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 28px; }
+.developer-link { display: grid; gap: 8px; min-height: 150px; padding: 18px; border: 1px solid var(--line); color: var(--ink); background: var(--surface); text-decoration: none; }
+.developer-link:hover { border-color: var(--accent); color: var(--ink); background: oklch(0.985 0.008 238); text-decoration: none; }
+.developer-link span { color: var(--muted); font-size: 13px; line-height: 1.45; }
 .results-list { margin-top: 18px; }
 .search-result { padding: 23px 0; }
 .result-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; color: var(--muted); font: 12px "SFMono-Regular", Consolas, monospace; }
@@ -258,6 +269,7 @@ video { width: 100%; max-height: 510px; border-radius: 7px; background: oklch(0.
   .page-heading, .status-strip, .section-heading { align-items: flex-start; flex-direction: column; }
   .field-grid, .field-grid.compact, .provider-grid, .profile-choice, .video-inspector, .result-body, .architecture-split, .architecture-storage, .architecture-storage-fields, .architecture-query-flow, .architecture-precision-flow { grid-template-columns: 1fr; }
   .clip-grid { grid-template-columns: 1fr; }
+  .developer-grid { grid-template-columns: 1fr; }
   .field-wide { grid-column: auto; }
   .index-choice { align-items: stretch; flex-direction: column; }
   .model-row { grid-template-columns: 1fr; gap: 4px; }
