@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Loader2, Play } from 'lucide-react'
 import { PageShell } from '../components/PageShell'
-import { TEST_CASES, PLACEHOLDER_NOTICE, type TestCase } from '../lib/testCases'
+import { TEST_CASES, type TestCase } from '../lib/testCases'
 import { testAssetUrl } from '../lib/api'
 import { QUERY_STAGES, stageAt } from '../lib/stages'
+import { useLanguage } from '../lib/settings'
+import { stringsFor, type Strings } from '../lib/i18n'
 
 const STAGE_LABELS: Record<string, string> = {
   uploading: 'Uploading footage',
@@ -18,7 +20,7 @@ const STAGE_LABELS: Record<string, string> = {
 // Paced so each stage is legible rather than flickering past.
 const RUN_SECONDS = 14
 
-function TestCard({ test }: { test: TestCase }) {
+function TestCard({ test, strings: t }: { test: TestCase; strings: Strings }) {
   const [running, setRunning] = useState(false)
   const [done, setDone] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -76,7 +78,7 @@ function TestCard({ test }: { test: TestCase }) {
           <p className="mt-1 text-xs leading-relaxed text-paper-300/50">{test.stresses}</p>
         </div>
         <span className="shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 font-mono text-[10px] text-amber-200/80">
-          placeholder
+          {t.notBuilt}
         </span>
       </div>
 
@@ -98,20 +100,20 @@ function TestCard({ test }: { test: TestCase }) {
       <div className="mt-4 space-y-3">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-wider text-paper-300/40">
-            Challenge
+            {t.challengeLabel}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-paper-300/70">{test.challenge}</p>
         </div>
         <div>
           <p className="font-mono text-[10px] uppercase tracking-wider text-paper-300/40">
-            How the architecture handles it
+            {t.handledLabel}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-paper-300/70">{test.mitigation}</p>
         </div>
       </div>
 
       <div className="mt-4 rounded-xl border border-white/10 bg-ink-800/40 p-3">
-        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-300/40">Query</p>
+        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-300/40">{t.queryLabel}</p>
         <p className="mt-1 text-xs text-paper-100">“{test.query}”</p>
         <p className="mt-2 font-mono text-[10px] text-paper-300/35">
           {test.localFile}
@@ -140,8 +142,7 @@ function TestCard({ test }: { test: TestCase }) {
         <div className="mt-4 flex items-center gap-2 rounded-xl border border-glow/30 bg-glow/10 p-3 text-xs text-paper-100">
           <Check size={13} className="shrink-0 text-glow" />
           <span>
-            Playing {test.sectionStart.toFixed(1)}s–{test.sectionEnd.toFixed(1)}s. Scripted replay,
-            not a live run.
+            {test.sectionStart.toFixed(1)}s - {test.sectionEnd.toFixed(1)}s · {t.walkthroughDone}
           </span>
         </div>
       )}
@@ -157,13 +158,16 @@ function TestCard({ test }: { test: TestCase }) {
         className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-2.5 text-sm text-paper-300/80 transition-colors hover:border-white/30 hover:text-paper-100 disabled:opacity-40"
       >
         <Play size={14} />
-        {running ? 'Running…' : 'Try it out'}
+        {running ? t.runningLabel : t.tryItOut}
       </button>
     </article>
   )
 }
 
 export function Tests() {
+  const [language] = useLanguage()
+  const t = stringsFor(language)
+
   return (
     <PageShell heroHeight="70vh">
       <div className="mx-auto w-full max-w-5xl px-6 pb-24 pt-8">
@@ -171,17 +175,16 @@ export function Tests() {
           className="text-5xl leading-tight tracking-tight text-white md:text-6xl"
           style={{ fontFamily: "'Instrument Serif', serif" }}
         >
-          Edge cases
+          {t.testsTitle}
         </h1>
         <p className="mt-5 max-w-2xl text-base leading-relaxed text-white/70">
-          Inputs chosen to stress a specific assumption in the architecture, rather than to show it
-          working on easy footage.
+{t.testsSubtitle}
         </p>
 
         <div className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-300" />
           <div className="text-sm text-amber-100/90">
-            <p className="font-medium">{PLACEHOLDER_NOTICE}</p>
+            <p className="font-medium">{t.placeholderBanner}</p>
             <p className="mt-1 text-xs text-amber-100/70">
               Every card is marked <span className="font-mono">placeholder</span> and “Try it out”
               replays a scripted walkthrough on a timer. Replace the numbers in{' '}
@@ -193,7 +196,7 @@ export function Tests() {
 
         <div className="mt-8 grid gap-4 lg:grid-cols-2">
           {TEST_CASES.map((test) => (
-            <TestCard key={test.id} test={test} />
+            <TestCard key={test.id} test={test} strings={t} />
           ))}
         </div>
       </div>

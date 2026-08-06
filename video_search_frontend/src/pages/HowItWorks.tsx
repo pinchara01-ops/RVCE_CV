@@ -1,4 +1,6 @@
 import { PageShell } from '../components/PageShell'
+import { useLanguage } from '../lib/settings'
+import { stringsFor } from '../lib/i18n'
 
 const STAGES = [
   {
@@ -39,6 +41,8 @@ const STAGES = [
 ]
 
 export function HowItWorks() {
+  const [language] = useLanguage()
+  const t = stringsFor(language)
   return (
     <PageShell heroHeight="55vh">
       <div className="mx-auto w-full max-w-3xl px-6 pb-24 pt-8">
@@ -46,10 +50,10 @@ export function HowItWorks() {
           className="text-5xl leading-tight tracking-tight text-white md:text-6xl"
           style={{ fontFamily: "'Instrument Serif', serif" }}
         >
-          How it <span className="italic text-glow">works</span>
+          {t.howTitle} <span className="italic text-glow">{t.howEmphasis}</span>
         </h1>
         <p className="mt-5 max-w-2xl text-base leading-relaxed text-white/70">
-          The path a video takes from upload to a playable answer.
+          {t.howSubtitle}
         </p>
 
         <div className="mt-12 space-y-4">

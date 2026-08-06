@@ -3,7 +3,14 @@
 // query_retrieval/models.py (SearchRequest/SearchResponse) so the shape stays
 // in sync with the backend contract without importing Python.
 
-import { getModel, getIndexModel, keyForModel, QUERY_MODELS, INDEX_MODELS } from './settings'
+import {
+  getModel,
+  getIndexModel,
+  keyForModel,
+  getConnectorField,
+  QUERY_MODELS,
+  INDEX_MODELS,
+} from './settings'
 
 export const API_BASE_URL =
   (import.meta.env.VITE_SEARCH_API_URL as string | undefined) ?? 'http://localhost:8000'
@@ -295,6 +302,8 @@ export interface DriveListing {
 export async function listDriveVideos(folder: string): Promise<DriveListing> {
   const body = new FormData()
   body.append('folder', folder)
+  const key = getConnectorField('drive')
+  if (key) body.append('api_key', key)
 
   const res = await fetch(`${API_BASE_URL}/api/quick/drive/list`, { method: 'POST', body })
   if (!res.ok) {

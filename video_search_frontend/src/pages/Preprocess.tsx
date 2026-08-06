@@ -6,6 +6,8 @@ import { StageSequence } from '../components/StageSequence'
 import { INDEX_STAGES } from '../lib/stages'
 import { runIndex, SearchApiError, type IndexResponse, type IndexWindow } from '../lib/api'
 import { formatTimestamp, formatBytes } from '../lib/format'
+import { useLanguage } from '../lib/settings'
+import { stringsFor, type Strings } from '../lib/i18n'
 
 const STAGE_LABELS: Record<string, string> = {
   uploading: 'Uploading footage',
@@ -18,7 +20,15 @@ const STAGE_LABELS: Record<string, string> = {
   persisting: 'Writing to the index',
 }
 
-function WindowRow({ window: entry, videoUrl }: { window: IndexWindow; videoUrl: string | null }) {
+function WindowRow({
+  window: entry,
+  videoUrl,
+  strings: t,
+}: {
+  window: IndexWindow
+  videoUrl: string | null
+  strings: Strings
+}) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -53,7 +63,7 @@ function WindowRow({ window: entry, videoUrl }: { window: IndexWindow; videoUrl:
           {entry.transcript && (
             <div>
               <p className="font-mono text-[10px] uppercase tracking-wider text-paper-300/40">
-                transcript
+                {t.transcriptLabel}
               </p>
               <p className="mt-1 text-xs text-paper-300/75">{entry.transcript}</p>
             </div>
@@ -105,7 +115,7 @@ function WindowRow({ window: entry, videoUrl }: { window: IndexWindow; videoUrl:
               ))}
             </div>
             <p className="mt-1.5 text-[10px] text-amber-200/60">
-              Placeholder vectors: hashes of the window text, not learned embeddings.
+              {t.placeholderVectors}
             </p>
           </div>
         </div>
@@ -115,6 +125,8 @@ function WindowRow({ window: entry, videoUrl }: { window: IndexWindow; videoUrl:
 }
 
 export function Preprocess() {
+  const [language] = useLanguage()
+  const t = stringsFor(language)
   const [file, setFile] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -170,11 +182,10 @@ export function Preprocess() {
           className="text-5xl leading-tight tracking-tight text-white md:text-6xl"
           style={{ fontFamily: "'Instrument Serif', serif" }}
         >
-          Build the <span className="italic text-glow">index</span>
+          {t.buildIndexTitle} <span className="italic text-glow">{t.buildIndexEmphasis}</span>
         </h1>
         <p className="mt-5 max-w-2xl text-base leading-relaxed text-white/70">
-          Upload long-form footage and watch it become time-aligned, searchable windows. Uses the
-          indexing model selected in Developer settings.
+{t.buildIndexSubtitle}
         </p>
 
         <div className="mt-10">
@@ -202,7 +213,7 @@ export function Preprocess() {
           >
             <UploadCloud size={24} className={dragActive ? 'text-glow' : 'text-paper-300/50'} />
             <p className="text-sm text-paper-100">
-              {file ? file.name : 'Upload long-form video'}
+              {file ? file.name : t.uploadLongForm}
             </p>
             <p className="font-mono text-[10px] text-paper-300/40">
               {file ? formatBytes(file.size) : 'MP4, WebM, MOV, AVI, MKV'}
@@ -224,7 +235,7 @@ export function Preprocess() {
 
 
         <div className="mt-3">
-          <ConnectorGrid onError={setError} />
+          <ConnectorGrid strings={t} onError={setError} />
         </div>
 
         <button
@@ -234,7 +245,7 @@ export function Preprocess() {
           className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-glow px-4 py-3 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <Layers size={15} />
-          {busy ? 'Indexing…' : 'Start indexing'}
+          {busy ? t.indexingNow : t.startIndexing}
         </button>
 
         {busy && (
@@ -257,7 +268,7 @@ export function Preprocess() {
               <div className="flex items-center gap-2">
                 <Film size={16} className="text-glow" />
                 <p className="text-sm text-paper-100">
-                  {result.window_count} windows indexed
+                  {result.window_count} {t.windowsIndexed}
                 </p>
               </div>
               {result.summary && (
@@ -272,7 +283,7 @@ export function Preprocess() {
 
             <div className="mt-4 space-y-2">
               {result.windows.map((entry) => (
-                <WindowRow key={entry.window_id} window={entry} videoUrl={videoUrl} />
+                <WindowRow key={entry.window_id} window={entry} videoUrl={videoUrl} strings={t} />
               ))}
             </div>
           </div>

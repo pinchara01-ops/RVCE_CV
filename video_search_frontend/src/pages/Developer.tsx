@@ -9,8 +9,10 @@ import {
   useIndexModel,
   useModel,
   useQdrantTarget,
+  useLanguage,
   type ModelChoice,
 } from '../lib/settings'
+import { stringsFor } from '../lib/i18n'
 
 // Mirrors the runtime profiles the Qdrant-backed backend exposes, so the two
 // surfaces describe the same system. Vector dimensions and stage models are
@@ -135,6 +137,8 @@ function KeyField({ provider, label }: { provider: string; label: string }) {
 }
 
 export function Developer() {
+  const [language] = useLanguage()
+  const t = stringsFor(language)
   const [queryModel, setQueryModel] = useModel()
   const [indexModel, setIndexModel] = useIndexModel()
   const [deployment, setDeployment] = useDeployment()
@@ -152,16 +156,16 @@ export function Developer() {
           className="text-5xl leading-tight tracking-tight text-white md:text-6xl"
           style={{ fontFamily: "'Instrument Serif', serif" }}
         >
-          Developer
+          {t.developerTitle}
         </h1>
         <p className="mt-4 text-base text-white/70">
-          Runtime configuration for this browser. Applied to the next run.
+          {t.developerSubtitle}
         </p>
 
         <div className="mt-10 space-y-4">
           <Panel
-            title="Deployment profile"
-            hint="Where models run. This decides the vector contract, so an index built under one profile cannot be searched under the other."
+            title={t.deploymentProfile}
+            hint={t.deploymentProfileHint}
           >
             <div className="grid gap-2 sm:grid-cols-2">
               {PROFILES.map((item) => {
@@ -190,7 +194,7 @@ export function Developer() {
 
             <div className="mt-4 rounded-xl border border-white/10 bg-ink-800/40 p-3">
               <p className="font-mono text-[10px] uppercase tracking-wider text-paper-300/40">
-                stage models
+                {t.stageModels}
               </p>
               <dl className="mt-2 space-y-1">
                 {profile.stages.map(([stage, model]) => (
@@ -202,7 +206,7 @@ export function Developer() {
               </dl>
 
               <p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-paper-300/40">
-                named vectors
+                {t.namedVectors}
               </p>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {profile.vectors.map((vector) => (
@@ -218,8 +222,8 @@ export function Developer() {
           </Panel>
 
           <Panel
-            title="Vector store"
-            hint="Where indexed windows are written. The single-call search path uses neither; it holds no state."
+            title={t.vectorStore}
+            hint={t.vectorStoreHint}
           >
             <div className="grid gap-2 sm:grid-cols-2">
               {[
@@ -254,22 +258,22 @@ export function Developer() {
             )}
           </Panel>
 
-          <Panel title="Query model" hint="Locates matching sections when a search runs.">
+          <Panel title={t.queryModelLabel} hint={t.queryModelHint}>
             <ModelList options={QUERY_MODELS} value={queryModel} onChange={setQueryModel} />
-            <p className="mt-3 font-mono text-[11px] text-paper-300/40">Active: {queryModel}</p>
+            <p className="mt-3 font-mono text-[11px] text-paper-300/40">{t.activeLabel}: {queryModel}</p>
           </Panel>
 
           <Panel
-            title="Indexing model"
-            hint="Segments uploaded footage into windows and describes each one."
+            title={t.indexModelLabel}
+            hint={t.indexModelHint}
           >
             <ModelList options={INDEX_MODELS} value={indexModel} onChange={setIndexModel} />
-            <p className="mt-3 font-mono text-[11px] text-paper-300/40">Active: {indexModel}</p>
+            <p className="mt-3 font-mono text-[11px] text-paper-300/40">{t.activeLabel}: {indexModel}</p>
           </Panel>
 
           <Panel
-            title="API keys"
-            hint="Sent with the request and held in sessionStorage only, so they are dropped when this tab closes. Never written to disk."
+            title={t.apiKeysLabel}
+            hint={t.apiKeysHint}
           >
             <div className="space-y-3">
               {providers.map((provider) => (

@@ -179,3 +179,36 @@ export function setQdrantTarget(value: string): void {
 export function useQdrantTarget() {
   return useStoredValue(getQdrantTarget, setQdrantTarget)
 }
+
+// Connector credentials. sessionStorage, same as model keys: present for the
+// tab, gone when it closes, never on disk.
+export function getConnectorField(key: string): string {
+  try {
+    return window.sessionStorage.getItem(`footageask.conn.${key}`) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function setConnectorField(key: string, value: string): void {
+  try {
+    if (value) window.sessionStorage.setItem(`footageask.conn.${key}`, value)
+    else window.sessionStorage.removeItem(`footageask.conn.${key}`)
+  } catch {
+    // Best effort.
+  }
+  broadcast()
+}
+
+export function useConnectorField(key: string) {
+  const [value, setValue] = useState('')
+
+  useEffect(() => {
+    setValue(getConnectorField(key))
+    const sync = () => setValue(getConnectorField(key))
+    window.addEventListener(CHANGE_EVENT, sync)
+    return () => window.removeEventListener(CHANGE_EVENT, sync)
+  }, [key])
+
+  return [value, (next: string) => setConnectorField(key, next)] as const
+}

@@ -56,6 +56,58 @@ export interface Strings {
   stageMatching: string
   stageLocalising: string
   stageClipping: string
+  // Preprocess page
+  buildIndexTitle: string
+  buildIndexEmphasis: string
+  buildIndexSubtitle: string
+  uploadLongForm: string
+  connectSource: string
+  connectSourceHint: string
+  notBuilt: string
+  startIndexing: string
+  indexingNow: string
+  windowsIndexed: string
+  driveHint: string
+  driveWarning: string
+  videosFound: string
+  transcriptLabel: string
+  objectsLabel: string
+  actionsLabel: string
+  audioEventsLabel: string
+  vectorsLabel: string
+  placeholderVectors: string
+  connectDatabase: string
+  // How it works page
+  howTitle: string
+  howEmphasis: string
+  howSubtitle: string
+  // Tests page
+  testsTitle: string
+  testsSubtitle: string
+  placeholderBanner: string
+  placeholderBannerBody: string
+  challengeLabel: string
+  handledLabel: string
+  queryLabel: string
+  tryItOut: string
+  runningLabel: string
+  walkthroughDone: string
+  // Developer page
+  developerTitle: string
+  developerSubtitle: string
+  deploymentProfile: string
+  deploymentProfileHint: string
+  vectorStore: string
+  vectorStoreHint: string
+  queryModelLabel: string
+  queryModelHint: string
+  indexModelLabel: string
+  indexModelHint: string
+  apiKeysLabel: string
+  apiKeysHint: string
+  activeLabel: string
+  stageModels: string
+  namedVectors: string
 }
 
 const en: Strings = {
@@ -109,10 +161,113 @@ const en: Strings = {
   stageMatching: 'Matching against the request',
   stageLocalising: 'Localising exact moments',
   stageClipping: 'Cutting playable clips',
+  buildIndexTitle: 'Build the',
+  buildIndexEmphasis: 'index',
+  buildIndexSubtitle:
+    'Upload long-form footage and watch it become time-aligned, searchable windows. Uses the indexing model selected in Developer settings.',
+  uploadLongForm: 'Upload long-form video',
+  connectSource: 'Connect a source',
+  connectSourceHint: 'Point the index at footage you already have instead of uploading it.',
+  notBuilt: 'not built',
+  startIndexing: 'Start indexing',
+  indexingNow: 'Indexing…',
+  windowsIndexed: 'windows indexed',
+  driveHint: 'Paste a folder link shared as “anyone with the link”.',
+  driveWarning:
+    'Needs a Google Cloud project you administer, with the Drive API enabled. A key from AI Studio will not work: it belongs to a Google-managed project you cannot enable APIs on.',
+  videosFound: 'videos found',
+  transcriptLabel: 'transcript',
+  objectsLabel: 'objects',
+  actionsLabel: 'actions',
+  audioEventsLabel: 'audio events',
+  vectorsLabel: 'vectors',
+  placeholderVectors: 'Placeholder vectors: hashes of the window text, not learned embeddings.',
+  connectDatabase: 'Connect a database',
+  howTitle: 'How it',
+  howEmphasis: 'works',
+  howSubtitle: 'The path a video takes from upload to a playable answer.',
+  testsTitle: 'Edge cases',
+  testsSubtitle:
+    'Inputs chosen to stress a specific assumption in the architecture, rather than to show it working on easy footage.',
+  placeholderBanner: 'Metrics on this page are placeholders pending real runs, not measured results.',
+  placeholderBannerBody:
+    'Every card is marked placeholder and “Try it out” replays a scripted walkthrough on a timer.',
+  challengeLabel: 'Challenge',
+  handledLabel: 'How the architecture handles it',
+  queryLabel: 'Query',
+  tryItOut: 'Try it out',
+  runningLabel: 'Running…',
+  walkthroughDone: 'Scripted replay, not a live run.',
+  developerTitle: 'Developer',
+  developerSubtitle: 'Runtime configuration for this browser. Applied to the next run.',
+  deploymentProfile: 'Deployment profile',
+  deploymentProfileHint:
+    'Where models run. This decides the vector contract, so an index built under one profile cannot be searched under the other.',
+  vectorStore: 'Vector store',
+  vectorStoreHint:
+    'Where indexed windows are written. The single-call search path uses neither; it holds no state.',
+  queryModelLabel: 'Query model',
+  queryModelHint: 'Locates matching sections when a search runs.',
+  indexModelLabel: 'Indexing model',
+  indexModelHint: 'Segments uploaded footage into windows and describes each one.',
+  apiKeysLabel: 'API keys',
+  apiKeysHint:
+    'Sent with the request and held in sessionStorage only, so they are dropped when this tab closes. Never written to disk.',
+  activeLabel: 'Active',
+  stageModels: 'stage models',
+  namedVectors: 'named vectors',
 }
 
 const hi: Strings = {
   ...en,
+  buildIndexTitle: 'सूचकांक',
+  buildIndexEmphasis: 'बनाएँ',
+  buildIndexSubtitle: 'लंबा फुटेज अपलोड करें और उसे समय-संरेखित, खोजने योग्य विंडो में बदलते देखें। डेवलपर सेटिंग्स में चुने गए मॉडल का उपयोग होता है।',
+  uploadLongForm: 'लंबा वीडियो अपलोड करें',
+  connectSource: 'स्रोत जोड़ें',
+  connectSourceHint: 'अपलोड करने के बजाय पहले से मौजूद फुटेज की ओर सूचकांक को इंगित करें।',
+  notBuilt: 'नहीं बना',
+  startIndexing: 'अनुक्रमण शुरू करें',
+  indexingNow: 'अनुक्रमण हो रहा है…',
+  windowsIndexed: 'विंडो अनुक्रमित',
+  driveHint: '“लिंक वाले किसी भी व्यक्ति” के रूप में साझा फ़ोल्डर लिंक चिपकाएँ।',
+  driveWarning: 'ऐसा Google Cloud प्रोजेक्ट चाहिए जिसका आप प्रशासन करते हों और जिसमें Drive API सक्षम हो। AI Studio की कुंजी काम नहीं करेगी।',
+  videosFound: 'वीडियो मिले',
+  transcriptLabel: 'प्रतिलेख',
+  objectsLabel: 'वस्तुएँ',
+  actionsLabel: 'क्रियाएँ',
+  audioEventsLabel: 'ध्वनि घटनाएँ',
+  vectorsLabel: 'सदिश',
+  placeholderVectors: 'प्लेसहोल्डर सदिश: विंडो पाठ के हैश, सीखे गए एम्बेडिंग नहीं।',
+  connectDatabase: 'डेटाबेस जोड़ें',
+  howTitle: 'यह कैसे',
+  howEmphasis: 'काम करता है',
+  howSubtitle: 'अपलोड से चलाने योग्य उत्तर तक वीडियो का मार्ग।',
+  testsTitle: 'किनारे के मामले',
+  testsSubtitle: 'ऐसे इनपुट जो आर्किटेक्चर की किसी विशिष्ट धारणा पर दबाव डालते हैं, न कि आसान फुटेज पर काम दिखाने के लिए।',
+  placeholderBanner: 'इस पृष्ठ के आँकड़े प्लेसहोल्डर हैं, मापे गए परिणाम नहीं।',
+  placeholderBannerBody: 'हर कार्ड प्लेसहोल्डर चिह्नित है और “आज़माएँ” एक स्क्रिप्टेड वॉकथ्रू चलाता है।',
+  challengeLabel: 'चुनौती',
+  handledLabel: 'आर्किटेक्चर इसे कैसे संभालता है',
+  queryLabel: 'प्रश्न',
+  tryItOut: 'आज़माएँ',
+  runningLabel: 'चल रहा है…',
+  walkthroughDone: 'स्क्रिप्टेड रीप्ले, लाइव रन नहीं।',
+  developerTitle: 'डेवलपर',
+  developerSubtitle: 'इस ब्राउज़र के लिए रनटाइम कॉन्फ़िगरेशन। अगले रन पर लागू।',
+  deploymentProfile: 'तैनाती प्रोफ़ाइल',
+  deploymentProfileHint: 'मॉडल कहाँ चलते हैं। यह सदिश अनुबंध तय करता है, इसलिए एक प्रोफ़ाइल में बना सूचकांक दूसरी में खोजा नहीं जा सकता।',
+  vectorStore: 'सदिश भंडार',
+  vectorStoreHint: 'अनुक्रमित विंडो कहाँ लिखी जाती हैं। एकल-कॉल खोज पथ इनमें से किसी का उपयोग नहीं करता।',
+  queryModelLabel: 'प्रश्न मॉडल',
+  queryModelHint: 'खोज चलने पर मेल खाते अनुभाग ढूँढता है।',
+  indexModelLabel: 'अनुक्रमण मॉडल',
+  indexModelHint: 'अपलोड किए गए फुटेज को विंडो में बाँटता है और प्रत्येक का वर्णन करता है।',
+  apiKeysLabel: 'API कुंजियाँ',
+  apiKeysHint: 'अनुरोध के साथ भेजी जाती हैं और केवल sessionStorage में रहती हैं। डिस्क पर कभी नहीं लिखी जातीं।',
+  activeLabel: 'सक्रिय',
+  stageModels: 'चरण मॉडल',
+  namedVectors: 'नामित सदिश',
   productName: 'अपर्चर',
   navQuery: 'खोज',
   nativeName: 'हिन्दी',
@@ -159,6 +314,54 @@ const hi: Strings = {
 
 const kn: Strings = {
   ...en,
+  buildIndexTitle: 'ಸೂಚಿಕೆ',
+  buildIndexEmphasis: 'ರಚಿಸಿ',
+  buildIndexSubtitle: 'ದೀರ್ಘ ದೃಶ್ಯಾವಳಿ ಅಪ್‌ಲೋಡ್ ಮಾಡಿ ಮತ್ತು ಅದು ಸಮಯ-ಹೊಂದಿಕೆಯ, ಹುಡುಕಬಹುದಾದ ವಿಂಡೋಗಳಾಗುವುದನ್ನು ನೋಡಿ.',
+  uploadLongForm: 'ದೀರ್ಘ ವೀಡಿಯೊ ಅಪ್‌ಲೋಡ್ ಮಾಡಿ',
+  connectSource: 'ಮೂಲ ಸಂಪರ್ಕಿಸಿ',
+  connectSourceHint: 'ಅಪ್‌ಲೋಡ್ ಮಾಡುವ ಬದಲು ಈಗಾಗಲೇ ಇರುವ ದೃಶ್ಯಾವಳಿಗೆ ಸೂಚಿಕೆಯನ್ನು ತೋರಿಸಿ.',
+  notBuilt: 'ನಿರ್ಮಿಸಿಲ್ಲ',
+  startIndexing: 'ಸೂಚಿಕೆ ಪ್ರಾರಂಭಿಸಿ',
+  indexingNow: 'ಸೂಚಿಕೆ ಆಗುತ್ತಿದೆ…',
+  windowsIndexed: 'ವಿಂಡೋಗಳು ಸೂಚಿಕೆಯಾಗಿವೆ',
+  driveHint: '“ಲಿಂಕ್ ಇರುವ ಯಾರಾದರೂ” ಎಂದು ಹಂಚಿದ ಫೋಲ್ಡರ್ ಲಿಂಕ್ ಅಂಟಿಸಿ.',
+  driveWarning: 'ನೀವು ನಿರ್ವಹಿಸುವ Google Cloud ಯೋಜನೆ ಬೇಕು, Drive API ಸಕ್ರಿಯವಾಗಿರಬೇಕು. AI Studio ಕೀಲಿ ಕೆಲಸ ಮಾಡುವುದಿಲ್ಲ.',
+  videosFound: 'ವೀಡಿಯೊಗಳು ಸಿಕ್ಕಿವೆ',
+  transcriptLabel: 'ಪ್ರತಿಲಿಪಿ',
+  objectsLabel: 'ವಸ್ತುಗಳು',
+  actionsLabel: 'ಕ್ರಿಯೆಗಳು',
+  audioEventsLabel: 'ಧ್ವನಿ ಘಟನೆಗಳು',
+  vectorsLabel: 'ಸದಿಶಗಳು',
+  placeholderVectors: 'ಪ್ಲೇಸ್‌ಹೋಲ್ಡರ್ ಸದಿಶಗಳು: ವಿಂಡೋ ಪಠ್ಯದ ಹ್ಯಾಶ್, ಕಲಿತ ಎಂಬೆಡಿಂಗ್ ಅಲ್ಲ.',
+  connectDatabase: 'ಡೇಟಾಬೇಸ್ ಸಂಪರ್ಕಿಸಿ',
+  howTitle: 'ಇದು ಹೇಗೆ',
+  howEmphasis: 'ಕೆಲಸ ಮಾಡುತ್ತದೆ',
+  howSubtitle: 'ಅಪ್‌ಲೋಡ್‌ನಿಂದ ಪ್ಲೇ ಮಾಡಬಹುದಾದ ಉತ್ತರದವರೆಗೆ ವೀಡಿಯೊದ ಹಾದಿ.',
+  testsTitle: 'ಅಂಚಿನ ಪ್ರಕರಣಗಳು',
+  testsSubtitle: 'ಸುಲಭ ದೃಶ್ಯಾವಳಿಯಲ್ಲಿ ಕೆಲಸ ತೋರಿಸುವ ಬದಲು ಆರ್ಕಿಟೆಕ್ಚರ್‌ನ ನಿರ್ದಿಷ್ಟ ಊಹೆಯನ್ನು ಒತ್ತಡಕ್ಕೆ ಒಳಪಡಿಸುವ ಇನ್‌ಪುಟ್‌ಗಳು.',
+  placeholderBanner: 'ಈ ಪುಟದ ಅಳತೆಗಳು ಪ್ಲೇಸ್‌ಹೋಲ್ಡರ್, ಅಳೆದ ಫಲಿತಾಂಶಗಳಲ್ಲ.',
+  placeholderBannerBody: 'ಪ್ರತಿ ಕಾರ್ಡ್ ಪ್ಲೇಸ್‌ಹೋಲ್ಡರ್ ಎಂದು ಗುರುತಿಸಲಾಗಿದೆ.',
+  challengeLabel: 'ಸವಾಲು',
+  handledLabel: 'ಆರ್ಕಿಟೆಕ್ಚರ್ ಇದನ್ನು ಹೇಗೆ ನಿಭಾಯಿಸುತ್ತದೆ',
+  queryLabel: 'ಪ್ರಶ್ನೆ',
+  tryItOut: 'ಪ್ರಯತ್ನಿಸಿ',
+  runningLabel: 'ನಡೆಯುತ್ತಿದೆ…',
+  walkthroughDone: 'ಸ್ಕ್ರಿಪ್ಟೆಡ್ ಮರುಪ್ಲೇ, ನೇರ ರನ್ ಅಲ್ಲ.',
+  developerTitle: 'ಡೆವಲಪರ್',
+  developerSubtitle: 'ಈ ಬ್ರೌಸರ್‌ಗಾಗಿ ರನ್‌ಟೈಮ್ ಸಂರಚನೆ.',
+  deploymentProfile: 'ನಿಯೋಜನೆ ಪ್ರೊಫೈಲ್',
+  deploymentProfileHint: 'ಮಾದರಿಗಳು ಎಲ್ಲಿ ಚಲಿಸುತ್ತವೆ. ಇದು ಸದಿಶ ಒಪ್ಪಂದವನ್ನು ನಿರ್ಧರಿಸುತ್ತದೆ.',
+  vectorStore: 'ಸದಿಶ ಸಂಗ್ರಹ',
+  vectorStoreHint: 'ಸೂಚಿಕೆ ವಿಂಡೋಗಳನ್ನು ಎಲ್ಲಿ ಬರೆಯಲಾಗುತ್ತದೆ.',
+  queryModelLabel: 'ಪ್ರಶ್ನೆ ಮಾದರಿ',
+  queryModelHint: 'ಹುಡುಕಾಟ ನಡೆದಾಗ ಹೊಂದಾಣಿಕೆಯ ವಿಭಾಗಗಳನ್ನು ಕಂಡುಹಿಡಿಯುತ್ತದೆ.',
+  indexModelLabel: 'ಸೂಚಿಕೆ ಮಾದರಿ',
+  indexModelHint: 'ದೃಶ್ಯಾವಳಿಯನ್ನು ವಿಂಡೋಗಳಾಗಿ ವಿಭಜಿಸುತ್ತದೆ.',
+  apiKeysLabel: 'API ಕೀಲಿಗಳು',
+  apiKeysHint: 'ವಿನಂತಿಯೊಂದಿಗೆ ಕಳುಹಿಸಲಾಗುತ್ತದೆ, ಡಿಸ್ಕ್‌ನಲ್ಲಿ ಎಂದಿಗೂ ಬರೆಯಲಾಗುವುದಿಲ್ಲ.',
+  activeLabel: 'ಸಕ್ರಿಯ',
+  stageModels: 'ಹಂತದ ಮಾದರಿಗಳು',
+  namedVectors: 'ಹೆಸರಿಸಿದ ಸದಿಶಗಳು',
   productName: 'ಅಪರ್ಚರ್',
   navQuery: 'ಹುಡುಕಾಟ',
   nativeName: 'ಕನ್ನಡ',
@@ -251,6 +454,54 @@ const bn: Strings = {
 
 const ta: Strings = {
   ...en,
+  buildIndexTitle: 'அட்டவணையை',
+  buildIndexEmphasis: 'உருவாக்கு',
+  buildIndexSubtitle: 'நீண்ட காணொளியைப் பதிவேற்றி, அது நேர-சீரமைக்கப்பட்ட, தேடக்கூடிய சாளரங்களாக மாறுவதைப் பாருங்கள்.',
+  uploadLongForm: 'நீண்ட வீடியோவைப் பதிவேற்று',
+  connectSource: 'மூலத்தை இணை',
+  connectSourceHint: 'பதிவேற்றுவதற்குப் பதிலாக ஏற்கனவே உள்ள காணொளியை நோக்கி அட்டவணையைச் சுட்டவும்.',
+  notBuilt: 'கட்டப்படவில்லை',
+  startIndexing: 'அட்டவணையிடத் தொடங்கு',
+  indexingNow: 'அட்டவணையிடுகிறது…',
+  windowsIndexed: 'சாளரங்கள் அட்டவணையிடப்பட்டன',
+  driveHint: '“இணைப்பு உள்ள யாரும்” எனப் பகிரப்பட்ட கோப்புறை இணைப்பை ஒட்டவும்.',
+  driveWarning: 'நீங்கள் நிர்வகிக்கும் Google Cloud திட்டம் தேவை, Drive API இயக்கப்பட வேண்டும். AI Studio விசை வேலை செய்யாது.',
+  videosFound: 'வீடியோக்கள் கிடைத்தன',
+  transcriptLabel: 'எழுத்துப்படி',
+  objectsLabel: 'பொருட்கள்',
+  actionsLabel: 'செயல்கள்',
+  audioEventsLabel: 'ஒலி நிகழ்வுகள்',
+  vectorsLabel: 'வெக்டர்கள்',
+  placeholderVectors: 'இடமீட்பு வெக்டர்கள்: சாளர உரையின் ஹாஷ், கற்ற எம்பெடிங் அல்ல.',
+  connectDatabase: 'தரவுத்தளத்தை இணை',
+  howTitle: 'இது எப்படி',
+  howEmphasis: 'வேலை செய்கிறது',
+  howSubtitle: 'பதிவேற்றத்திலிருந்து இயக்கக்கூடிய பதில் வரை வீடியோவின் பாதை.',
+  testsTitle: 'விளிம்பு நிலைகள்',
+  testsSubtitle: 'எளிய காணொளியில் வேலை செய்வதைக் காட்டுவதற்குப் பதிலாக கட்டமைப்பின் குறிப்பிட்ட அனுமானத்தை அழுத்தும் உள்ளீடுகள்.',
+  placeholderBanner: 'இப்பக்கத்தின் அளவீடுகள் இடமீட்புகள், அளக்கப்பட்ட முடிவுகள் அல்ல.',
+  placeholderBannerBody: 'ஒவ்வொரு அட்டையும் இடமீட்பு எனக் குறிக்கப்பட்டுள்ளது.',
+  challengeLabel: 'சவால்',
+  handledLabel: 'கட்டமைப்பு இதை எப்படிக் கையாள்கிறது',
+  queryLabel: 'வினவல்',
+  tryItOut: 'முயற்சி செய்',
+  runningLabel: 'இயங்குகிறது…',
+  walkthroughDone: 'ஸ்கிரிப்ட் மறுஒளிபரப்பு, நேரடி இயக்கம் அல்ல.',
+  developerTitle: 'உருவாக்குநர்',
+  developerSubtitle: 'இந்த உலாவிக்கான இயக்க நேர அமைப்பு.',
+  deploymentProfile: 'வரிசைப்படுத்தல் சுயவிவரம்',
+  deploymentProfileHint: 'மாதிரிகள் எங்கே இயங்குகின்றன. இது வெக்டர் ஒப்பந்தத்தை முடிவு செய்கிறது.',
+  vectorStore: 'வெக்டர் சேமிப்பு',
+  vectorStoreHint: 'அட்டவணையிடப்பட்ட சாளரங்கள் எங்கே எழுதப்படுகின்றன.',
+  queryModelLabel: 'வினவல் மாதிரி',
+  queryModelHint: 'தேடல் இயங்கும்போது பொருந்தும் பகுதிகளைக் கண்டறியும்.',
+  indexModelLabel: 'அட்டவணை மாதிரி',
+  indexModelHint: 'காணொளியைச் சாளரங்களாகப் பிரிக்கிறது.',
+  apiKeysLabel: 'API விசைகள்',
+  apiKeysHint: 'கோரிக்கையுடன் அனுப்பப்படும், வட்டில் ஒருபோதும் எழுதப்படாது.',
+  activeLabel: 'செயலில்',
+  stageModels: 'நிலை மாதிரிகள்',
+  namedVectors: 'பெயரிடப்பட்ட வெக்டர்கள்',
   productName: 'அப்பர்ச்சர்',
   navQuery: 'தேடல்',
   nativeName: 'தமிழ்',
