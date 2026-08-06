@@ -12,6 +12,7 @@ import {
   VerificationProvider,
   RuntimeProfile,
   RuntimeSession,
+  apiErrorMessage,
   jsonFetch,
   loadRuntimeSessionId,
 } from "@/lib/api";
@@ -223,7 +224,7 @@ export default function SearchPage() {
       setDecomposition(data.decomposition ?? data.query_decomposition ?? undefined);
       setDiagnostics(data.diagnostics);
     } catch (cause) {
-      setError(String(cause));
+      setError(apiErrorMessage(cause));
       setResults([]);
       setDiagnostics(undefined);
     } finally {
