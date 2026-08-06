@@ -24,6 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from datetime import datetime, timedelta
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,7 @@ from fastapi.responses import StreamingResponse
 from .drive_connector import fetch_drive_file, list_drive_videos, parse_folder_id, _api_key
 from .quick_demo import _CLIP_ROOT, _probe_duration, _resolve_api_key, DEFAULT_MODEL
 from .quick_index import index_video_file
+from .nvr_metadata import extract_time_filter, matches_constraint, parse_filename
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,8 @@ class IndexedWindow:
     actions: list[str]
     audio_events: list[str]
     search_terms: list[str] = field(default_factory=list)
+    camera: str | None = None
+    recorded_at: datetime | None = None
     tokens: Counter = field(default_factory=Counter)
 
     def searchable_text(self) -> str:
@@ -91,6 +95,14 @@ class IndexedWindow:
             "actions": self.actions,
             "audio_events": self.audio_events,
             "search_terms": self.search_terms,
+            "camera": self.camera,
+            # Absolute wall-clock time of this window, not just an offset: the
+            # thing an operator actually asks for.
+            "recorded_at": (
+                (self.recorded_at + timedelta(seconds=self.start)).isoformat()
+                if self.recorded_at
+                else None
+            ),
         }
 
 
@@ -175,6 +187,7 @@ async def index_drive_folder(
                 # One at a time: never hold more than a single video on disk.
                 fetch_drive_file(item["id"], local, drive_key)
                 duration = _probe_duration(local)
+                meta = parse_filename(item["name"])
                 result = index_video_file(
                     source=local,
                     duration=duration,
@@ -196,6 +209,8 @@ async def index_drive_folder(
                         actions=window["actions"],
                         audio_events=window["audio_events"],
                         search_terms=window.get("search_terms", []),
+                        camera=meta.camera,
+                        recorded_at=meta.recorded_at,
                     )
                     for window in result["windows"]
                 ]
@@ -208,6 +223,7 @@ async def index_drive_folder(
                         "name": item["name"],
                         "duration_seconds": duration,
                         "window_count": len(windows),
+                        **meta.public(),
                     },
                     windows,
                 )
@@ -245,18 +261,41 @@ def search_library(query: str = Form(...), top_k: int = Form(8)) -> dict[str, An
     if not LIBRARY.windows:
         return {"query": text, "results": [], "searched_windows": 0, "note": "library is empty"}
 
+    # Pull "tuesday afternoon" / "CAM02" out before scoring, so the literal
+    # matcher never scores a window for containing the word "afternoon".
+    text, constraint = extract_time_filter(text, datetime.now())
+    candidates = [
+        window
+        for window in LIBRARY.windows
+        if matches_constraint(window.recorded_at, window.camera, constraint)
+    ]
+    if not text.strip():
+        # Time or camera alone is a valid query: return that footage in order.
+        ordered = sorted(candidates, key=lambda w: (w.recorded_at or datetime.min, w.start))
+        results = []
+        for window in ordered[: max(1, min(int(top_k), 50))]:
+            payload = window.public()
+            payload["score"] = 1.0
+            payload["relative"] = 1.0
+            payload["media_url"] = f"/api/quick/library/media/{window.video_id}"
+            results.append(payload)
+        return {
+            "query": query,
+            "filter": constraint,
+            "results": results,
+            "searched_windows": len(LIBRARY.windows),
+            "matched_windows": len(candidates),
+        }
+
     query_tokens = tokenize(text)
     frequency = LIBRARY.document_frequency()
-    total = len(LIBRARY.windows)
+    total = len(LIBRARY.windows) or 1
     idf = {
         token: math.log(1 + total / (1 + frequency.get(token, 0)))
         for token in set(query_tokens)
     }
 
-    scored = [
-        (_score(query_tokens, window, idf), window)
-        for window in LIBRARY.windows
-    ]
+    scored = [(_score(query_tokens, window, idf), window) for window in candidates]
     scored = [pair for pair in scored if pair[0] > 0]
     scored.sort(key=lambda pair: pair[0], reverse=True)
 
@@ -271,9 +310,11 @@ def search_library(query: str = Form(...), top_k: int = Form(8)) -> dict[str, An
         results.append(payload)
 
     return {
-        "query": text,
+        "query": query,
+        "effective_query": text,
+        "filter": constraint,
         "results": results,
-        "searched_windows": total,
+        "searched_windows": len(LIBRARY.windows),
         "matched_windows": len(scored),
     }
 
