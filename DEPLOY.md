@@ -42,6 +42,8 @@ otherwise 404 on refresh).
 | Name | Value | Notes |
 |---|---|---|
 | `VITE_SEARCH_API_URL` | `https://your-backend.onrender.com` | No trailing slash. Must be HTTPS or the browser blocks it as mixed content. |
+| `VITE_SITE_URL` | `https://your-public-site.example` | Canonical and social-sharing URL. Change this when the Vercel domain changes. |
+| `VITE_ANALYTICS_ENDPOINT` | Optional | Privacy-reviewed first-party event collector. Leave unset to disable network analytics. |
 
 That is the **only** variable the frontend needs. No API keys are baked into
 the frontend build; anything a user types on `/developer` stays in their
@@ -67,7 +69,12 @@ A `Dockerfile` is committed at the repository root.
 | `OPENAI_API_KEY` | Only for GPT models | Needed if anyone selects an OpenAI model on `/developer`. |
 | `GOOGLE_API_KEY` | Only for Drive | Drive folder listing. Falls back to `GEMINI_API_KEY` if unset. |
 | `QUICK_DEMO_MODEL` | No | Default model. Defaults to `gemini-3.1-flash-lite`. |
-| `ALLOWED_ORIGIN_REGEX` | No | Defaults to `https://.*\.vercel\.app`, which already covers Vercel preview deploys. |
+| `ALLOWED_ORIGIN_REGEX` | No | Optional reviewed preview-origin regex. Production defaults to no regex; prefer exact `ALLOWED_ORIGINS`. |
+| `PUBLIC_LAUNCH_MODE` | Launch only | Set `true` to enforce sample-only public search, durable limits, and developer protection. |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Launch only | Durable atomic usage and idempotency store. |
+| `VISITOR_COOKIE_SECRET` / `IP_HASH_SECRET` | Launch only | Independent server-only random secrets, at least 32 bytes each. |
+| `PUBLIC_SAMPLE_*_PATH` | Launch only | Backend paths for approved sample media. Paths are never returned to browsers. |
+| `DEVELOPER_FEATURES_ENABLED` / `DEVELOPER_ADMIN_TOKEN` | Production developer access | Keep disabled unless protected admin access is required. |
 
 Users can also paste their own keys on `/developer` at runtime, which override
 the server's for that request and are never persisted.

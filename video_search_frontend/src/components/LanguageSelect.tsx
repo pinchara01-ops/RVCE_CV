@@ -1,5 +1,6 @@
 import { Languages } from 'lucide-react'
 import { LANGUAGE_OPTIONS } from '../lib/languages'
+import { track } from '../lib/analytics'
 
 interface LanguageSelectProps {
   value: string
@@ -14,7 +15,10 @@ export function LanguageSelect({ value, onChange, disabled }: LanguageSelectProp
       <select
         value={value}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value)
+          track('language_changed', { interface_language: e.target.value })
+        }}
         aria-label="Query language"
         className="appearance-none bg-transparent pr-1 text-sm text-white outline-none disabled:opacity-50"
       >

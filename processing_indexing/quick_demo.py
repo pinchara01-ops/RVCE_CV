@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 
 from .gemini_runtime import (
@@ -36,6 +36,14 @@ from .openai_runtime import (
     sample_frames,
 )
 from .search_prompt import build_search_prompt
+from .public_demo import (
+    PaidOperation,
+    PublicDemoError,
+    PublicSampleCatalog,
+    SampleNotFound,
+    public_launch_enabled,
+    reserve_paid_operation,
+)
 from .chunking import (
     CHUNK_SECONDS,
     MAX_PARALLEL_CHUNKS,
@@ -56,6 +64,13 @@ MAX_MOMENTS = 4
 
 # Longest single returned section. Anything longer is a region, not a moment.
 MAX_SECTION_SECONDS = 30.0
+MAX_QUERY_CHARACTERS = int(os.environ.get("PUBLIC_DEMO_MAX_QUERY_CHARACTERS", "1000"))
+PUBLIC_VIDEO_BYTES = int(os.environ.get("PUBLIC_DEMO_MAX_VIDEO_BYTES", str(100 * 1024 * 1024)))
+PUBLIC_IMAGE_BYTES = int(os.environ.get("PUBLIC_DEMO_MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))
+PUBLIC_AUDIO_BYTES = int(os.environ.get("PUBLIC_DEMO_MAX_AUDIO_BYTES", str(10 * 1024 * 1024)))
+PUBLIC_REFERENCE_BYTES = int(
+    os.environ.get("PUBLIC_DEMO_MAX_REFERENCE_BYTES", str(25 * 1024 * 1024))
+)
 
 # Clips live for the life of the backend process and are cleaned up on restart.
 _CLIP_ROOT = Path(tempfile.gettempdir()) / "rvce_quick_demo"
@@ -78,6 +93,33 @@ _VIDEO_MIME = {
     ".mkv": "video/x-matroska",
     ".m4v": "video/mp4",
 }
+
+
+def _copy_limited(upload: UploadFile, destination: Path, limit: int) -> None:
+    written = 0
+    with destination.open("wb") as handle:
+        while chunk := upload.file.read(1024 * 1024):
+            written += len(chunk)
+            if written > limit:
+                destination.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="The selected file is too large.")
+            handle.write(chunk)
+
+
+def _valid_video_signature(path: Path) -> bool:
+    with path.open("rb") as source:
+        header = source.read(16)
+    return (
+        len(header) >= 12 and header[4:8] == b"ftyp"
+        or header.startswith(b"\x1aE\xdf\xa3")
+        or header.startswith(b"RIFF") and header[8:12] == b"AVI "
+    )
+
+
+def _provider_error_detail(exc: Exception) -> str:
+    if public_launch_enabled():
+        return "The live search provider is temporarily unavailable. Please try again."
+    return str(exc)
 
 _MOMENT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -464,23 +506,27 @@ def _transcode_to_mp3(source: Path, destination: Path) -> bool:
 
 @router.post("/voice-query")
 async def quick_voice_query(
+    request: Request,
+    response: Response,
     audio: UploadFile = File(...),
     api_key: str | None = Form(None),
     model: str | None = Form(None),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     """Turn a spoken request into the search text, using the multimodal model."""
 
     resolved_model = (model or "").strip() or DEFAULT_MODEL
-    resolved_key = _resolve_api_key(api_key, resolved_model)
-
     workspace = _CLIP_ROOT / f"voice_{uuid.uuid4().hex}"
     workspace.mkdir(parents=True, exist_ok=True)
     try:
         suffix = Path(audio.filename or "clip.webm").suffix.lower() or ".webm"
         source = workspace / f"speech{suffix}"
         try:
-            with source.open("wb") as handle:
-                shutil.copyfileobj(audio.file, handle)
+            _copy_limited(
+                audio,
+                source,
+                PUBLIC_AUDIO_BYTES if public_launch_enabled() else 100 * 1024 * 1024,
+            )
         finally:
             await audio.close()
 
@@ -499,6 +545,10 @@ async def quick_voice_query(
                 )
             send_path = converted
 
+        resolved_key = _resolve_api_key(None if public_launch_enabled() else api_key, resolved_model)
+        paid = reserve_paid_operation(request, response, idempotency_key)
+        if isinstance(paid, dict):
+            return paid
         runtime = GoogleGenAIRuntime(api_key=resolved_key)
         try:
             payload, _ = runtime.generate_json(
@@ -510,20 +560,24 @@ async def quick_voice_query(
                 operation_name="voice_query",
             )
         except GeminiRuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise HTTPException(status_code=502, detail=_provider_error_detail(exc)) from exc
 
-        return {
+        result = {
             "query": str(payload.get("query") or "").strip(),
             "language": str(payload.get("language") or "").strip(),
             "model": resolved_model,
         }
+        return paid.complete(result) if isinstance(paid, PaidOperation) else result
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
 
 @router.post("/search")
 async def quick_search(
-    video: UploadFile = File(...),
+    request: Request,
+    response: Response,
+    video: UploadFile | None = File(None),
+    sample_id: str | None = Form(None),
     query: str = Form(""),
     audio: UploadFile | None = File(None),
     images: list[UploadFile] = File(default=[]),
@@ -531,6 +585,7 @@ async def quick_search(
     language: str = Form(""),
     api_key: str | None = Form(None),
     model: str | None = Form(None),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     """Upload a video and a request; get back playable clips of matching moments.
 
@@ -540,6 +595,8 @@ async def quick_search(
     """
 
     normalized_query = (query or "").strip()
+    if len(normalized_query) > MAX_QUERY_CHARACTERS:
+        raise HTTPException(status_code=400, detail="The search query is too long.")
     spoken = audio is not None and bool(getattr(audio, "filename", ""))
     has_images = any(getattr(item, "filename", "") for item in (images or []))
     has_reference = reference is not None and bool(getattr(reference, "filename", ""))
@@ -551,23 +608,40 @@ async def quick_search(
 
     # Resolve the model first: it decides which provider's key is needed.
     resolved_model = (model or "").strip() or DEFAULT_MODEL
-    resolved_key = _resolve_api_key(api_key, resolved_model)
 
     request_id = uuid.uuid4().hex
     workspace = _CLIP_ROOT / request_id
     workspace.mkdir(parents=True, exist_ok=True)
 
-    suffix = Path(video.filename or "upload.mp4").suffix.lower() or ".mp4"
+    public_sample: Path | None = None
+    if public_launch_enabled():
+        try:
+            public_sample = PublicSampleCatalog.from_environment().resolve((sample_id or "").strip())
+        except SampleNotFound as exc:
+            raise PublicDemoError(404, "SAMPLE_NOT_FOUND", "That sample is not available.") from exc
+    elif video is None:
+        raise HTTPException(status_code=400, detail="Select a video to search.")
+
+    upload_name = public_sample.name if public_sample else ((video.filename if video else "") or "upload.mp4")
+    suffix = Path(upload_name).suffix.lower() or ".mp4"
     source = workspace / f"source{suffix}"
-    try:
-        with source.open("wb") as handle:
-            shutil.copyfileobj(video.file, handle)
-    finally:
-        await video.close()
+    if public_sample:
+        if public_sample.stat().st_size > PUBLIC_VIDEO_BYTES:
+            shutil.rmtree(workspace, ignore_errors=True)
+            raise PublicDemoError(413, "FILE_TOO_LARGE", "That sample is temporarily unavailable.")
+        shutil.copyfile(public_sample, source)
+    elif video is not None:
+        try:
+            _copy_limited(video, source, 700 * 1024 * 1024)
+        finally:
+            await video.close()
 
     if not source.stat().st_size:
         shutil.rmtree(workspace, ignore_errors=True)
         raise HTTPException(status_code=400, detail="The uploaded video was empty.")
+    if not _valid_video_signature(source):
+        shutil.rmtree(workspace, ignore_errors=True)
+        raise HTTPException(status_code=415, detail="The selected file is not a supported video.")
 
     mime_type = _VIDEO_MIME.get(suffix, "video/mp4")
 
@@ -579,8 +653,11 @@ async def quick_search(
         audio_suffix = Path(audio.filename or "speech.webm").suffix.lower() or ".webm"
         raw_audio = workspace / f"request{audio_suffix}"
         try:
-            with raw_audio.open("wb") as handle:
-                shutil.copyfileobj(audio.file, handle)
+            _copy_limited(
+                audio,
+                raw_audio,
+                PUBLIC_AUDIO_BYTES if public_launch_enabled() else 100 * 1024 * 1024,
+            )
         finally:
             await audio.close()
 
@@ -606,8 +683,11 @@ async def quick_search(
             continue
         path = workspace / f"reference_{index}{suffix}"
         try:
-            with path.open("wb") as handle:
-                shutil.copyfileobj(item.file, handle)
+            _copy_limited(
+                item,
+                path,
+                PUBLIC_IMAGE_BYTES if public_launch_enabled() else 100 * 1024 * 1024,
+            )
         finally:
             await item.close()
         if path.stat().st_size:
@@ -620,11 +700,14 @@ async def quick_search(
         suffix = Path(reference.filename or "ref.mp4").suffix.lower() or ".mp4"
         path = workspace / f"reference_clip{suffix}"
         try:
-            with path.open("wb") as handle:
-                shutil.copyfileobj(reference.file, handle)
+            _copy_limited(
+                reference,
+                path,
+                PUBLIC_REFERENCE_BYTES if public_launch_enabled() else 700 * 1024 * 1024,
+            )
         finally:
             await reference.close()
-        if path.stat().st_size:
+        if path.stat().st_size and _valid_video_signature(path):
             extra_media.append((path, _VIDEO_MIME.get(suffix, "video/mp4")))
             reference_used = True
 
@@ -635,6 +718,11 @@ async def quick_search(
             detail="The attachments could not be processed. Try again, or type the request.",
         )
 
+    resolved_key = _resolve_api_key(None if public_launch_enabled() else api_key, resolved_model)
+    paid = reserve_paid_operation(request, response, idempotency_key)
+    if isinstance(paid, dict):
+        shutil.rmtree(workspace, ignore_errors=True)
+        return paid
     duration = _probe_duration(source)
     prompt = (
         build_search_prompt(
@@ -667,7 +755,7 @@ async def quick_search(
             )
         except OpenAIRuntimeError as exc:
             shutil.rmtree(workspace, ignore_errors=True)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise HTTPException(status_code=502, detail=_provider_error_detail(exc)) from exc
         diagnostics_payload["frames_sampled"] = frames_sampled
         diagnostics_payload["provider"] = "openai"
         moments = _coerce_moments(payload, duration)
@@ -707,7 +795,9 @@ async def quick_search(
                 )
             except GeminiRuntimeError as exc:
                 # One bad chunk should not lose the rest of the video.
-                logger.warning("chunk at %.1fs failed: %s", chunk.offset_seconds, exc)
+                logger.warning(
+                    "chunk at %.1fs failed (%s)", chunk.offset_seconds, type(exc).__name__
+                )
                 return []
             found = _coerce_moments(chunk_payload, chunk.duration_seconds)
             # Offsets are exact arithmetic, not the model's estimate.
@@ -764,7 +854,7 @@ async def quick_search(
             )
         except GeminiRuntimeError as exc:
             shutil.rmtree(workspace, ignore_errors=True)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise HTTPException(status_code=502, detail=_provider_error_detail(exc)) from exc
         diagnostics_payload = diagnostics.as_dict()
         diagnostics_payload["provider"] = "gemini"
         moments = _coerce_moments(payload, duration)
@@ -782,7 +872,7 @@ async def quick_search(
             }
         )
 
-    return {
+    result = {
         "request_id": request_id,
         "query": normalized_query,
         "spoken": bool(extra_media),
@@ -792,6 +882,7 @@ async def quick_search(
         "frames_sampled": frames_sampled,
         "diagnostics": diagnostics_payload,
     }
+    return paid.complete(result) if isinstance(paid, PaidOperation) else result
 
 
 @router.get("/clip/{request_id}/{clip_name}")

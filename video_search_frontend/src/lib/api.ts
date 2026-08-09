@@ -54,7 +54,32 @@ export interface SearchResponse {
   diagnostics: Record<string, unknown>
 }
 
-export class SearchApiError extends Error {}
+export class SearchApiError extends Error {
+  code?: string
+  usage?: PublicUsage
+
+  constructor(message: string, code?: string, usage?: PublicUsage) {
+    super(message)
+    this.code = code
+    this.usage = usage
+  }
+}
+
+export interface PublicUsage {
+  limit: number
+  remaining: number
+  resetAt: string
+}
+
+export interface PublicSample {
+  id: string
+  name: string
+  description: string
+  duration: string
+  modalities: string[]
+  queries: string[]
+  available: boolean
+}
 
 // `language` is not a field on query_retrieval's SearchRequest, the backend
 // has no per-language query handling yet, so it is intentionally not sent.
@@ -106,6 +131,7 @@ export interface QuickSearchResponse {
   summary: string
   model: string
   moments: QuickMoment[]
+  usage?: PublicUsage
 }
 
 export interface QuickSearchInput {
@@ -117,6 +143,7 @@ export interface QuickSearchInput {
   /** Reference clip: "find moments like this". */
   reference?: File | null
   language?: string
+  sampleId?: string
 }
 
 export function clipUrl(path: string): string {
@@ -125,11 +152,13 @@ export function clipUrl(path: string): string {
 
 export async function runQuickSearch(
   input: QuickSearchInput,
-  video: File,
+  video: File | null,
   signal?: AbortSignal,
+  idempotencyKey: string = crypto.randomUUID(),
 ): Promise<QuickSearchResponse> {
   const body = new FormData()
-  body.append('video', video, video.name || 'video.mp4')
+  if (video) body.append('video', video, video.name || 'video.mp4')
+  if (input.sampleId) body.append('sample_id', input.sampleId)
   body.append('query', input.query ?? '')
   body.append('model', getModel())
   const key = keyForModel(getModel(), QUERY_MODELS)
@@ -152,7 +181,13 @@ export async function runQuickSearch(
 
   let res: Response
   try {
-    res = await fetch(`${API_BASE_URL}/api/quick/search`, { method: 'POST', body, signal })
+    res = await fetch(`${API_BASE_URL}/api/quick/search`, {
+      method: 'POST',
+      body,
+      signal,
+      credentials: 'include',
+      headers: { 'Idempotency-Key': idempotencyKey },
+    })
   } catch (err) {
     if (signal?.aborted) throw err
     throw new SearchApiError(
@@ -161,14 +196,21 @@ export async function runQuickSearch(
   }
   if (!res.ok) {
     let detail = res.statusText
+    let code: string | undefined
+    let usage: PublicUsage | undefined
     try {
       const parsed = await res.json()
       if (typeof parsed?.detail === 'string') detail = parsed.detail
+      else if (typeof parsed?.error?.message === 'string') {
+        detail = parsed.error.message
+        code = parsed.error.code
+        usage = parsed.usage
+      }
       else if (parsed?.detail) detail = JSON.stringify(parsed.detail)
     } catch {
       // response body was not JSON; fall back to statusText
     }
-    throw new SearchApiError(detail)
+    throw new SearchApiError(detail, code, usage)
   }
   return res.json() as Promise<QuickSearchResponse>
 }
@@ -192,7 +234,13 @@ export async function runVoiceQuery(
 
   let res: Response
   try {
-    res = await fetch(`${API_BASE_URL}/api/quick/voice-query`, { method: 'POST', body, signal })
+    res = await fetch(`${API_BASE_URL}/api/quick/voice-query`, {
+      method: 'POST',
+      body,
+      signal,
+      credentials: 'include',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+    })
   } catch (err) {
     if (signal?.aborted) throw err
     throw new SearchApiError('Could not reach the search API.')
@@ -208,6 +256,22 @@ export async function runVoiceQuery(
     throw new SearchApiError(detail)
   }
   return res.json() as Promise<VoiceQueryResponse>
+}
+
+export async function getPublicUsage(): Promise<PublicUsage> {
+  const response = await fetch(`${API_BASE_URL}/api/public/usage`, { credentials: 'include' })
+  if (!response.ok) throw new SearchApiError('Live searches are temporarily unavailable.')
+  return ((await response.json()) as { usage: PublicUsage }).usage
+}
+
+export async function getPublicSamples(): Promise<PublicSample[]> {
+  const response = await fetch(`${API_BASE_URL}/api/public/samples`, { credentials: 'include' })
+  if (!response.ok) throw new SearchApiError('Sample footage is temporarily unavailable.')
+  return ((await response.json()) as { samples: PublicSample[] }).samples
+}
+
+export function publicSampleMediaUrl(sampleId: string): string {
+  return `${API_BASE_URL}/api/public/samples/${encodeURIComponent(sampleId)}/media`
 }
 
 export async function pingApi(signal?: AbortSignal): Promise<boolean> {
