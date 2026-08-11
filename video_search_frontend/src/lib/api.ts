@@ -12,8 +12,8 @@ import {
   INDEX_MODELS,
 } from './settings'
 
-export const API_BASE_URL =
-  (import.meta.env.VITE_SEARCH_API_URL as string | undefined) ?? 'http://localhost:8000'
+const configuredApiUrl = (import.meta.env.VITE_SEARCH_API_URL as string | undefined)?.trim()
+export const API_BASE_URL = configuredApiUrl || (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 export interface ModalityEvidence {
   modality: string

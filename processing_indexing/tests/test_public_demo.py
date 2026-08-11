@@ -13,16 +13,56 @@ from processing_indexing.public_demo import (
 
 
 def test_public_sample_catalog_exposes_opaque_metadata_and_rejects_unknown_paths(tmp_path: Path):
-    video = tmp_path / "private" / "atm.mp4"
+    video = tmp_path / "private" / "animal.webm"
     video.parent.mkdir()
     video.write_bytes(b"sample")
-    catalog = PublicSampleCatalog.from_paths({"atm-surveillance": video})
+    catalog = PublicSampleCatalog.from_paths({"animal-belly-rub": video})
 
-    assert catalog.public()[0]["id"] == "atm-surveillance"
+    assert catalog.public()[0]["id"] == "animal-belly-rub"
     assert str(tmp_path) not in str(catalog.public())
-    assert catalog.resolve("atm-surveillance") == video.resolve()
+    assert catalog.resolve("animal-belly-rub") == video.resolve()
     with pytest.raises(SampleNotFound):
         catalog.resolve("../../private/atm.mp4")
+
+
+def test_public_mode_accepts_a_bounded_personal_upload_when_enabled(monkeypatch):
+    from processing_indexing import quick_demo
+    from processing_indexing.debug_api import app
+
+    monkeypatch.setenv("PUBLIC_LAUNCH_MODE", "true")
+    monkeypatch.setenv("PUBLIC_UPLOADS_ENABLED", "true")
+    monkeypatch.setattr(quick_demo, "_resolve_api_key", lambda *_args: "server-key")
+    monkeypatch.setattr(quick_demo, "reserve_paid_operation", lambda *_args: {"duplicate": True})
+    response = TestClient(app).post(
+        "/api/quick/search",
+        data={"query": "find the animal"},
+        files={"video": ("animal.webm", b"\x1aE\xdf\xa3" + b"0" * 32, "video/webm")},
+        headers={"Idempotency-Key": "upload-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"duplicate": True}
+
+
+def test_sample_search_uses_allowlist_even_outside_public_mode(monkeypatch, tmp_path: Path):
+    from processing_indexing import quick_demo
+    from processing_indexing.debug_api import app
+
+    sample = tmp_path / "animal.webm"
+    sample.write_bytes(b"\x1aE\xdf\xa3" + b"0" * 32)
+    monkeypatch.delenv("PUBLIC_LAUNCH_MODE", raising=False)
+    monkeypatch.setenv("PUBLIC_SAMPLE_ANIMAL_PATH", str(sample))
+    monkeypatch.setattr(quick_demo, "_resolve_api_key", lambda *_args: "server-key")
+    monkeypatch.setattr(quick_demo, "reserve_paid_operation", lambda *_args: {"duplicate": True})
+
+    response = TestClient(app).post(
+        "/api/quick/search",
+        data={"sample_id": "animal-belly-rub", "query": "find the animal"},
+        headers={"Idempotency-Key": "sample-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"duplicate": True}
 
 
 def test_limiter_interprets_atomic_allow_limit_and_duplicate_results(monkeypatch):

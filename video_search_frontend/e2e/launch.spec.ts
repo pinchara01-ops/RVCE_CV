@@ -6,8 +6,21 @@ test('fresh visitor reaches launch demo without technical onboarding', async ({ 
   await expect(page.getByText('No account needed · 2 free live searches · 13 Indian languages')).toBeVisible()
   await expect(page.getByText(/choose a deployment profile/i)).toHaveCount(0)
   await expect(page.getByText(/paste an api key/i)).toHaveCount(0)
-  await expect(page.getByRole('button', { name: /ATM surveillance/i })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Show the moment someone approaches the ATM/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Animals enjoying belly rubs/i })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: /Describe the moment/i })).toHaveCount(0)
+  await expect(page.getByText(/Exact matching moments/i)).toHaveCount(0)
+  await page.getByRole('button', { name: /Animals enjoying belly rubs/i }).click()
+  await expect(page.getByText(/Selected:/i)).toBeVisible()
+  await expect(page.getByRole('button', { name: /Find the moment a dog gets a belly rub/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Upload yours/i })).toBeVisible()
+  await page.getByRole('button', { name: /Upload yours/i }).click()
+  await page.getByLabel(/^Choose one video file/i).setInputFiles({
+    name: 'personal-video.webm',
+    mimeType: 'video/webm',
+    buffer: Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x00]),
+  })
+  await expect(page.getByText('Selected: personal-video.webm', { exact: true })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: /Describe the moment/i })).toBeEnabled()
   const hasHorizontalOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth,
   )

@@ -27,39 +27,25 @@ class SampleNotFound(LookupError):
 
 
 _SAMPLE_COPY: dict[str, dict[str, Any]] = {
-    "atm-surveillance": {
-        "name": "ATM surveillance",
-        "description": "Fixed-camera footage around an ATM.",
-        "duration": "1:15",
+    "animal-belly-rub": {
+        "name": "Animals enjoying belly rubs",
+        "description": "A playful compilation with repeated animal interactions.",
+        "duration": "3:01",
         "modalities": ["video", "audio"],
         "queries": [
-            "When do people start breaking open the machine?",
-            "Show the moment someone approaches the ATM.",
+            "Find the cat in the video.",
+            "Find the pig in the video.",
+            "When does someone pet the pig?",
         ],
     },
-    "dashcam-road": {
-        "name": "Dashcam road",
-        "description": "Road footage recorded from a moving vehicle.",
-        "duration": "20:00",
+    "barking-dog": {
+        "name": "Barking dog reaction",
+        "description": "A short clip combining a visible reaction with a clear audio event.",
+        "duration": "0:24",
         "modalities": ["video", "audio"],
-        "queries": ["Find the vehicle pulling over.", "Show a vehicle on the road ahead."],
-    },
-    "low-light-room": {
-        "name": "Low-light room",
-        "description": "Darkened footage that stresses visual retrieval.",
-        "duration": "1:15",
-        "modalities": ["video", "audio"],
-        "queries": ["Find movement inside the dark room.", "When does a person become visible?"],
-    },
-    "multilingual-conversation": {
-        "name": "Multilingual conversation",
-        "description": "Conversation footage for multilingual spoken-word search.",
-        "duration": "Demo clip",
-        "modalities": ["video", "audio", "speech"],
         "queries": [
-            "Find the moment the speakers greet each other.",
-            "ಮಾತನಾಡಲು ಪ್ರಾರಂಭಿಸುವ ಕ್ಷಣವನ್ನು ತೋರಿಸಿ.",
-            "बातचीत शुरू होने का क्षण दिखाएँ।",
+            "When does the dog bark?",
+            "Show the dog's reaction.",
         ],
     },
 }
@@ -75,17 +61,23 @@ class PublicSampleCatalog:
 
     @classmethod
     def from_environment(cls) -> "PublicSampleCatalog":
+        repository_root = Path(__file__).resolve().parents[1]
         names = {
-            "atm-surveillance": "PUBLIC_SAMPLE_ATM_PATH",
-            "dashcam-road": "PUBLIC_SAMPLE_DASHCAM_PATH",
-            "low-light-room": "PUBLIC_SAMPLE_LOW_LIGHT_PATH",
-            "multilingual-conversation": "PUBLIC_SAMPLE_MULTILINGUAL_PATH",
+            "animal-belly-rub": (
+                "PUBLIC_SAMPLE_ANIMAL_PATH",
+                repository_root / "test_assets" / "media" / "public_demo" / "animal_belly_rub.webm",
+            ),
+            "barking-dog": (
+                "PUBLIC_SAMPLE_DOG_PATH",
+                repository_root / "test_assets" / "media" / "public_demo" / "barking_dog_reaction.webm",
+            ),
         }
-        configured = {
-            sample_id: Path(value)
-            for sample_id, env_name in names.items()
-            if (value := os.environ.get(env_name, "").strip())
-        }
+        configured: dict[str, Path] = {}
+        for sample_id, (env_name, bundled_path) in names.items():
+            configured_value = os.environ.get(env_name, "").strip()
+            candidate = Path(configured_value) if configured_value else bundled_path
+            if candidate.is_file():
+                configured[sample_id] = candidate
         return cls(configured)
 
     def public(self) -> list[dict[str, Any]]:

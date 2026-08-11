@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:cloudrun": "playwright test --config playwright.cloudrun.config.ts"
   },
   "dependencies": {
     "lucide-react": "^1.28.0",

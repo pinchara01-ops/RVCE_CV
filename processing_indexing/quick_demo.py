@@ -20,14 +20,17 @@ import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 
 from .gemini_runtime import (
+    GeminiKeyPool,
     GeminiRuntimeError,
     GoogleGenAIRuntime,
+    parse_gemini_keys_json,
 )
 from .openai_runtime import (
     OpenAIRuntimeError,
@@ -65,7 +68,10 @@ MAX_MOMENTS = 4
 # Longest single returned section. Anything longer is a region, not a moment.
 MAX_SECTION_SECONDS = 30.0
 MAX_QUERY_CHARACTERS = int(os.environ.get("PUBLIC_DEMO_MAX_QUERY_CHARACTERS", "1000"))
-PUBLIC_VIDEO_BYTES = int(os.environ.get("PUBLIC_DEMO_MAX_VIDEO_BYTES", str(100 * 1024 * 1024)))
+PUBLIC_VIDEO_BYTES = int(os.environ.get("PUBLIC_DEMO_MAX_VIDEO_BYTES", str(25 * 1024 * 1024)))
+PUBLIC_SAMPLE_VIDEO_BYTES = int(
+    os.environ.get("PUBLIC_DEMO_MAX_SAMPLE_VIDEO_BYTES", str(100 * 1024 * 1024))
+)
 PUBLIC_IMAGE_BYTES = int(os.environ.get("PUBLIC_DEMO_MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))
 PUBLIC_AUDIO_BYTES = int(os.environ.get("PUBLIC_DEMO_MAX_AUDIO_BYTES", str(10 * 1024 * 1024)))
 PUBLIC_REFERENCE_BYTES = int(
@@ -74,6 +80,8 @@ PUBLIC_REFERENCE_BYTES = int(
 
 # Clips live for the life of the backend process and are cleaned up on restart.
 _CLIP_ROOT = Path(tempfile.gettempdir()) / "rvce_quick_demo"
+_GEMINI_POOL: GeminiKeyPool | None = None
+_GEMINI_POOL_LOCK = Lock()
 
 _IMAGE_MIME = {
     ".jpg": "image/jpeg",
@@ -332,15 +340,31 @@ def _resolve_api_key(supplied: str | None, model: str = "") -> str:
         return key
 
     key = (supplied or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key and os.environ.get("GEMINI_API_KEYS_JSON", "").strip():
+        parse_gemini_keys_json(os.environ["GEMINI_API_KEYS_JSON"])
+        return ""
     if not key:
         raise HTTPException(
             status_code=400,
             detail=(
                 "No Gemini API key available. Enter one in Developer settings, or "
-                "set GEMINI_API_KEY in the backend environment."
+                "set GEMINI_API_KEY or GEMINI_API_KEYS_JSON in the backend environment."
             ),
         )
     return key
+
+
+def _gemini_runtime(api_key: str) -> GoogleGenAIRuntime:
+    if api_key:
+        return GoogleGenAIRuntime(api_key=api_key)
+    global _GEMINI_POOL
+    with _GEMINI_POOL_LOCK:
+        if _GEMINI_POOL is None:
+            _GEMINI_POOL = GeminiKeyPool(
+                parse_gemini_keys_json(os.environ.get("GEMINI_API_KEYS_JSON", ""))
+            )
+        pool = _GEMINI_POOL
+    return GoogleGenAIRuntime(key_pool=pool)
 
 
 def _cut_clip(source: Path, start: float, end: float, destination: Path) -> bool:
@@ -549,7 +573,7 @@ async def quick_voice_query(
         paid = reserve_paid_operation(request, response, idempotency_key)
         if isinstance(paid, dict):
             return paid
-        runtime = GoogleGenAIRuntime(api_key=resolved_key)
+        runtime = _gemini_runtime(resolved_key)
         try:
             payload, _ = runtime.generate_json(
                 model=resolved_model,
@@ -614,11 +638,21 @@ async def quick_search(
     workspace.mkdir(parents=True, exist_ok=True)
 
     public_sample: Path | None = None
-    if public_launch_enabled():
+    public_upload = (
+        public_launch_enabled()
+        and os.environ.get("PUBLIC_UPLOADS_ENABLED", "").lower() == "true"
+        and video is not None
+        and bool(getattr(video, "filename", ""))
+    )
+    if sample_id:
         try:
             public_sample = PublicSampleCatalog.from_environment().resolve((sample_id or "").strip())
         except SampleNotFound as exc:
-            raise PublicDemoError(404, "SAMPLE_NOT_FOUND", "That sample is not available.") from exc
+            if public_launch_enabled():
+                raise PublicDemoError(404, "SAMPLE_NOT_FOUND", "That sample is not available.") from exc
+            raise HTTPException(status_code=404, detail="That sample is not available.") from exc
+    elif public_launch_enabled() and not public_upload:
+        raise PublicDemoError(400, "UNSUPPORTED_FILE", "Choose sample footage or upload one video.")
     elif video is None:
         raise HTTPException(status_code=400, detail="Select a video to search.")
 
@@ -626,13 +660,17 @@ async def quick_search(
     suffix = Path(upload_name).suffix.lower() or ".mp4"
     source = workspace / f"source{suffix}"
     if public_sample:
-        if public_sample.stat().st_size > PUBLIC_VIDEO_BYTES:
+        if public_sample.stat().st_size > PUBLIC_SAMPLE_VIDEO_BYTES:
             shutil.rmtree(workspace, ignore_errors=True)
             raise PublicDemoError(413, "FILE_TOO_LARGE", "That sample is temporarily unavailable.")
         shutil.copyfile(public_sample, source)
     elif video is not None:
         try:
-            _copy_limited(video, source, 700 * 1024 * 1024)
+            _copy_limited(
+                video,
+                source,
+                PUBLIC_VIDEO_BYTES if public_launch_enabled() else 700 * 1024 * 1024,
+            )
         finally:
             await video.close()
 
@@ -769,7 +807,7 @@ async def quick_search(
                 status_code=500, detail="The video could not be prepared for scanning."
             )
 
-        runtime = GoogleGenAIRuntime(api_key=resolved_key)
+        runtime = _gemini_runtime(resolved_key)
 
         def scan(chunk: Chunk) -> list[dict[str, Any]]:
             chunk_prompt = (
@@ -841,7 +879,7 @@ async def quick_search(
             "chunk_seconds": CHUNK_SECONDS,
         }
     else:
-        runtime = GoogleGenAIRuntime(api_key=resolved_key)
+        runtime = _gemini_runtime(resolved_key)
         try:
             payload, diagnostics = runtime.generate_json(
                 model=resolved_model,

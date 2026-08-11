@@ -1,21 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Eye, Film, Image, Mic, Play, Volume2 } from 'lucide-react'
+import { ArrowRight, Check, Eye, Film, Image, Mic, Play, Search, Upload, Volume2 } from 'lucide-react'
 import { Nav } from '../components/Nav'
 import { BackgroundVideo } from '../components/BackgroundVideo'
 import { ParticleField } from '../components/ParticleField'
 import { MomentResults } from '../components/MomentResults'
 import { StageSequence } from '../components/StageSequence'
-import { QueryComposer, EMPTY_ATTACHMENTS, type Attachments } from '../components/QueryComposer'
 import {
   getPublicSamples,
   getPublicUsage,
+  publicSampleMediaUrl,
   runQuickSearch,
   SearchApiError,
   type PublicSample,
   type PublicUsage,
   type QuickSearchResponse,
 } from '../lib/api'
-import type { Recording } from '../components/VoiceRecorder'
 import { LANGUAGE_OPTIONS } from '../lib/languages'
 import { stringsFor, RTL_LANGUAGES } from '../lib/i18n'
 import { QUERY_STAGES } from '../lib/stages'
@@ -44,10 +43,10 @@ export function Landing() {
   const t = stringsFor(language)
   const rtl = RTL_LANGUAGES.has(language)
   const [query, setQuery] = useState('')
-  const [recording, setRecording] = useState<Recording | null>(null)
-  const [attachments, setAttachments] = useState<Attachments>(EMPTY_ATTACHMENTS)
   const [samples, setSamples] = useState<PublicSample[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [sourceMode, setSourceMode] = useState<'sample' | 'upload'>('sample')
+  const [video, setVideo] = useState<File | null>(null)
   const [usage, setUsage] = useState<PublicUsage | null>(null)
   const [busy, setBusy] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -57,13 +56,13 @@ export function Landing() {
 
   const selected = useMemo(() => samples.find((sample) => sample.id === selectedId) ?? null, [samples, selectedId])
   const exhausted = usage?.remaining === 0
+  const sourceReady = sourceMode === 'sample' ? Boolean(selected?.available) : Boolean(video)
 
   useEffect(() => {
     track('landing_viewed', { language })
     getPublicSamples()
       .then((catalog) => {
         setSamples(catalog)
-        setSelectedId(catalog.find((sample) => sample.available)?.id ?? catalog[0]?.id ?? null)
         track('sample_library_viewed', { language })
       })
       .catch(() => setError('The sample library is temporarily unavailable. Recorded examples are still available.'))
@@ -80,34 +79,34 @@ export function Landing() {
   }, [busy])
 
   const submit = async () => {
-    if (!selected?.available || exhausted || busy) return
-    const hasRequest = query.trim() || recording || attachments.images.length || attachments.reference
-    if (!hasRequest) return
+    if (!sourceReady || exhausted || busy) return
+    if (!query.trim()) return
     setBusy(true)
     setError(null)
     setResponse(null)
     setElapsed(0)
-    const modality = attachments.reference ? 'reference_clip' : attachments.images.length ? 'reference_image' : recording ? 'voice' : 'text'
-    track('live_search_started', { sample_id: selected.id, modality, language })
+    const modality = 'text'
+    const sampleId = sourceMode === 'sample' ? selected?.id : undefined
+    track('live_search_started', { sample_id: sampleId, modality, language })
     try {
       const result = await runQuickSearch({
         query,
-        sampleId: selected.id,
-        audio: recording?.blob ?? null,
-        images: attachments.images,
-        reference: attachments.reference,
+        sampleId,
+        audio: null,
+        images: [],
+        reference: null,
         language: LANGUAGE_OPTIONS.find((item) => item.code === language)?.label ?? 'English',
-      }, null, undefined, crypto.randomUUID())
+      }, sourceMode === 'upload' ? video : null, undefined, crypto.randomUUID())
       setResponse(result)
       if (result.usage) setUsage(result.usage)
-      track('live_search_completed', { sample_id: selected.id, modality, language, outcome: 'success' })
+      track('live_search_completed', { sample_id: sampleId, modality, language, outcome: 'success' })
       window.setTimeout(() => document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' }), 80)
     } catch (cause) {
       const message = cause instanceof SearchApiError ? cause.message : 'Search failed safely. Please try again.'
       setError(message)
       if (cause instanceof SearchApiError && cause.usage) setUsage(cause.usage)
-      if (message.toLowerCase().includes('two live searches')) track('live_limit_reached', { sample_id: selected.id, modality, language })
-      else track('live_search_failed', { sample_id: selected.id, modality, language, outcome: 'safe_error' })
+      if (message.toLowerCase().includes('two live searches')) track('live_limit_reached', { sample_id: sampleId, modality, language })
+      else track('live_search_failed', { sample_id: sampleId, modality, language, outcome: 'safe_error' })
       void getPublicUsage().then(setUsage).catch(() => undefined)
     } finally {
       setBusy(false)
@@ -118,6 +117,47 @@ export function Landing() {
     uploading: 'Preparing sample', decoding: 'Reading footage', understanding: 'Understanding your request',
     scanning: 'Scanning every signal', matching: 'Ranking matching moments', localising: 'Finding exact timestamps', clipping: 'Preparing playable moments',
   }
+
+  const changeMode = (mode: 'sample' | 'upload') => {
+    setSourceMode(mode)
+    setQuery('')
+    setResponse(null)
+    setError(null)
+  }
+
+  const chooseSample = (sample: PublicSample) => {
+    if (!sample.available) return
+    setSelectedId(sample.id)
+    setQuery('')
+    setResponse(null)
+    setError(null)
+    track('sample_selected', { sample_id: sample.id, language })
+  }
+
+  const promptForm = (placeholder: string) => (
+    <form
+      className="mt-4 flex items-center gap-2 rounded-2xl border border-white/15 bg-black/55 p-2 focus-within:border-glow/60"
+      onSubmit={(event) => { event.preventDefault(); void submit() }}
+    >
+      <Search size={18} className="ml-2 shrink-0 text-white/45" aria-hidden="true" />
+      <input
+        aria-label="Describe the moment"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={placeholder}
+        disabled={busy || exhausted}
+        className="min-w-0 flex-1 bg-transparent px-2 py-3 text-sm text-white outline-none placeholder:text-white/35"
+      />
+      <button
+        type="submit"
+        aria-label="Run search"
+        disabled={!query.trim() || busy || exhausted}
+        className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-glow text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ArrowRight size={19} />
+      </button>
+    </form>
+  )
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-black text-paper-100" dir={rtl ? 'rtl' : 'ltr'}>
@@ -135,36 +175,58 @@ export function Landing() {
           </p>
           <p className="mt-4 text-xs text-paper-300/55">No account needed · 2 free live searches · 13 Indian languages</p>
 
-          <div className="mt-9 w-full max-w-2xl">
-            {selected && <p className="mb-3 text-left text-xs text-paper-300/60">Searching in <span className="text-glow">{selected.name}</span></p>}
-            <QueryComposer strings={t} value={query} onChange={setQuery} recording={recording} onRecorded={(value) => { setRecording(value); if (value) track('voice_query_used', { language }) }} attachments={attachments} onAttachments={(value) => { setAttachments(value); if (value.images.length) track('reference_image_used', { language }); if (value.reference) track('reference_clip_used', { language }) }} disabled={busy || exhausted || !selected?.available} onSubmit={submit} onError={setError} rtl={rtl} />
-            <div className="mt-3 min-h-6 text-left text-xs" aria-live="polite">
-              {usage && !exhausted && <span className="text-paper-300/60">{usage.remaining} free live {usage.remaining === 1 ? 'search' : 'searches'} remaining today</span>}
-              {usage && exhausted && <span className="text-amber-200">You’ve used today’s two live searches. Recorded examples remain available. Reset {new Date(usage.resetAt).toLocaleString()}.</span>}
+          <div id="live-demo" className="mt-8 w-full max-w-5xl overflow-hidden rounded-3xl border border-white/15 bg-black/70 text-left shadow-2xl backdrop-blur-xl">
+            <div className="border-b border-white/10 px-5 py-4 md:px-6">
+              <p className="text-sm font-medium text-white">Search a video</p>
+              <p className="mt-1 text-xs text-white/50">Keep your footage selected while you describe the moment to find.</p>
             </div>
-            {busy && <div className="mt-5" aria-live="polite"><StageSequence stages={QUERY_STAGES} labels={stageLabels} elapsedSeconds={elapsed} expectedSeconds={35} active /></div>}
-            {error && <p role="alert" className="mt-3 text-left text-sm text-red-300">{error}</p>}
+            <div className="grid lg:grid-cols-[0.9fr_1.1fr]">
+              <section className="border-b border-white/10 p-5 lg:border-b-0 lg:border-r lg:p-6" aria-labelledby="footage-heading">
+                <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div><p className="font-mono text-[10px] uppercase tracking-[0.2em] text-glow">Footage</p><h2 id="footage-heading" className="mt-1 text-lg text-white">Choose one video</h2></div>
+                  <div className="grid w-full grid-cols-2 rounded-full border border-white/10 bg-black/35 p-1 text-[11px] sm:flex sm:w-auto">
+                    <button type="button" onClick={() => changeMode('sample')} aria-pressed={sourceMode === 'sample'} className={`rounded-full px-3 py-1.5 ${sourceMode === 'sample' ? 'bg-glow font-medium text-black' : 'text-white/60'}`}>Samples</button>
+                    <button type="button" onClick={() => changeMode('upload')} aria-pressed={sourceMode === 'upload'} className={`rounded-full px-3 py-1.5 ${sourceMode === 'upload' ? 'bg-glow font-medium text-black' : 'text-white/60'}`}>Upload yours</button>
+                  </div>
+                </div>
+
+                {sourceMode === 'sample' && <div className="mt-4 space-y-2">
+                  {samples.map((sample, index) => <button key={sample.id} type="button" disabled={!sample.available} aria-pressed={selectedId === sample.id} onClick={() => chooseSample(sample)} className={`group flex w-full min-w-0 items-center gap-3 rounded-2xl border p-2 text-left transition ${selectedId === sample.id ? 'border-glow bg-glow/10' : 'border-white/10 bg-white/[0.03] hover:border-white/25'} disabled:cursor-not-allowed disabled:opacity-45`}>
+                    <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-xl bg-ink-800"><video src={sample.available ? publicSampleMediaUrl(sample.id) : undefined} muted playsInline preload="metadata" className="h-full w-full object-cover opacity-80"/><span className="absolute left-1.5 top-1.5 rounded bg-black/65 px-1.5 py-0.5 font-mono text-[8px] text-white/70">0{index + 1}</span></div>
+                    <div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><h3 className="text-sm font-medium text-white">{sample.name}</h3>{selectedId === sample.id && <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-glow text-black"><Check size={13}/></span>}</div><p className="mt-1 truncate text-[11px] text-white/45">{sample.description}</p><p className="mt-1 text-[10px] text-glow/75">{sample.duration}</p></div>
+                  </button>)}
+                </div>}
+
+                {sourceMode === 'upload' && <label htmlFor="hero-video-upload" className={`mt-4 flex cursor-pointer items-center gap-3 rounded-2xl border px-4 py-5 transition ${video ? 'border-glow bg-glow/[0.07]' : 'border-dashed border-white/20 bg-white/[0.03] hover:border-glow/50'}`}>
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-glow/10 text-glow">{video ? <Check size={18}/> : <Upload size={18}/>}</span>
+                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-white">{video?.name ?? 'Choose one video file'}</span><span className="mt-1 block text-[11px] text-white/45">MP4, WebM, MOV or MKV · up to 25 MB</span></span>
+                  <span className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/70">{video ? 'Replace' : 'Browse'}</span>
+                  <input id="hero-video-upload" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-matroska" onChange={(event) => { const next = event.target.files?.[0] ?? null; setVideo(next); setQuery(''); setResponse(null); setError(null); if (next) track('upload_started', { language }) }} className="sr-only"/>
+                </label>}
+
+                <p className="mt-4 text-[11px] leading-5 text-white/40">{sourceMode === 'sample' ? 'Sample selection is free. A search is counted only when you submit a query.' : 'Your upload is processed temporarily and removed after the search.'}</p>
+              </section>
+
+              <section className="p-5 lg:p-6" aria-labelledby="query-heading">
+                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-glow">Query</p>
+                <h2 id="query-heading" className="mt-1 text-lg text-white">Ask for the moment you remember</h2>
+                {sourceReady ? <div className="mt-4 flex items-center gap-2 rounded-xl border border-glow/25 bg-glow/[0.06] px-3 py-2 text-xs text-white/70"><Check size={14} className="shrink-0 text-glow"/><span className="truncate"><span className="text-white/45">Selected:</span> {sourceMode === 'sample' ? selected?.name : video?.name}</span></div> : <p className="mt-4 rounded-xl border border-dashed border-white/15 px-4 py-3 text-xs text-white/45">Choose a video on the left to continue.</p>}
+
+                {sourceMode === 'sample' && selected && <div className="mt-4"><p className="text-xs text-white/45">Try a suggested query</p><div className="mt-2 flex flex-wrap gap-2">{selected.queries.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setQuery(suggestion); track('suggested_query_selected', { sample_id: selected.id, language }) }} className={`rounded-full border px-3 py-2 text-xs transition ${query === suggestion ? 'border-glow bg-glow/10 text-glow' : 'border-white/15 text-white/70 hover:border-glow/50 hover:text-white'}`}>{suggestion}</button>)}</div></div>}
+
+                {sourceReady && promptForm(sourceMode === 'sample' ? 'Describe another moment in this sample…' : 'For example: Find the person waving at the camera…')}
+                <div className="mt-3 min-h-6 text-xs" aria-live="polite">{usage && !exhausted && <span className="text-paper-300/60">{usage.remaining} free live {usage.remaining === 1 ? 'search' : 'searches'} remaining today</span>}{usage && exhausted && <span className="text-amber-200">You’ve used today’s two live searches. Reset {new Date(usage.resetAt).toLocaleString()}.</span>}</div>
+                {busy && <div className="mt-4" aria-live="polite"><StageSequence stages={QUERY_STAGES} labels={stageLabels} elapsedSeconds={elapsed} expectedSeconds={35} active/></div>}
+                {error && <p role="alert" className="mt-3 text-sm text-red-300">{error}</p>}
+              </section>
+            </div>
           </div>
-          <div className="mt-6 flex flex-wrap justify-center gap-3">
-            <button onClick={() => document.getElementById('sample-library')?.scrollIntoView({ behavior: 'smooth' })} className="rounded-full bg-glow px-6 py-3 text-sm font-semibold text-black">Try the live demo</button>
-            <button onClick={() => route('/how-it-works', 'how_it_works_opened')} className="rounded-full border border-white/20 px-6 py-3 text-sm text-white/80">See how it works</button>
-          </div>
+          <div className="mt-5 flex flex-wrap justify-center gap-3"><button onClick={() => route('/tests', 'recorded_demo_played')} className="rounded-full bg-glow px-6 py-3 text-sm font-medium text-black">Explore more test cases</button><button onClick={() => route('/how-it-works', 'how_it_works_opened')} className="rounded-full border border-white/20 px-6 py-3 text-sm text-white/80">See how it works</button></div>
         </div>
       </section>
 
       <main className="relative bg-black"><ParticleField />
-        <section id="sample-library" className="relative z-10 mx-auto max-w-6xl px-5 py-20">
-          <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end"><div><p className="eyebrow">Public demo library</p><h2 className="mt-3 text-4xl text-white md:text-5xl" style={{ fontFamily: "'Instrument Serif', serif" }}>Choose footage, then ask naturally.</h2></div><div className="rounded-full border border-white/10 p-1 text-xs"><span className="inline-block rounded-full bg-glow px-4 py-2 text-black">Try sample footage</span><span className="inline-block px-4 py-2 text-white/35" title="Disabled for public launch">Upload your own video · Developer/local</span></div></div>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {samples.map((sample, index) => <button key={sample.id} type="button" disabled={!sample.available} aria-pressed={selectedId === sample.id} onClick={() => { setSelectedId(sample.id); track('sample_selected', { sample_id: sample.id, language }) }} className={`group overflow-hidden rounded-2xl border text-left transition ${selectedId === sample.id ? 'border-glow bg-glow/10' : 'border-white/10 bg-ink-900/80 hover:border-white/25'} disabled:cursor-not-allowed disabled:opacity-55`}>
-              <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-ink-700 via-black to-amber-950/50"><div className="absolute inset-0 opacity-50" style={{ backgroundImage: `linear-gradient(90deg, transparent 49%, rgba(255,255,255,.06) 50%), linear-gradient(transparent 49%, rgba(255,255,255,.05) 50%)`, backgroundSize: '32px 32px' }} /><span className="absolute left-3 top-3 rounded-full bg-black/70 px-2 py-1 font-mono text-[10px] text-white/70">CAM {String(index + 1).padStart(2, '0')}</span><span className="absolute bottom-3 right-3 text-xs text-white/60">{sample.duration}</span></div>
-              <div className="p-4"><h3 className="text-sm text-white">{sample.name}</h3><p className="mt-2 text-xs leading-relaxed text-paper-300/50">{sample.description}</p><p className="mt-3 text-[10px] uppercase tracking-wider text-glow/80">{sample.modalities.join(' · ')}</p>{!sample.available && <p className="mt-2 text-[11px] text-amber-200/70">Media must be configured on the backend</p>}</div>
-            </button>)}
-          </div>
-          {selected && <div className="mt-5 rounded-2xl border border-white/10 bg-ink-900/70 p-5"><p className="text-xs uppercase tracking-widest text-paper-300/40">Suggested searches · selecting one does not use a live search</p><div className="mt-3 flex flex-wrap gap-2">{selected.queries.map((suggestion) => <button key={suggestion} onClick={() => { setQuery(suggestion); track('suggested_query_selected', { sample_id: selected.id, language }); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="rounded-full border border-white/15 px-4 py-2 text-left text-xs text-white/75 hover:border-glow/60 hover:text-white">{suggestion}</button>)}</div></div>}
-        </section>
-
-        <section id="results-section" className="relative z-10 mx-auto max-w-4xl px-5 py-12" aria-live="polite"><div className="liquid-glass overflow-hidden rounded-2xl"><div className="border-b border-white/10 px-5 py-3 text-sm">Exact matching moments</div><MomentResults strings={t} response={response} error={null} /></div></section>
+        {response && <section id="results-section" className="relative z-10 mx-auto max-w-4xl px-5 py-12" aria-live="polite"><div className="liquid-glass overflow-hidden rounded-2xl"><div className="border-b border-white/10 px-5 py-3 text-sm">Exact matching moments</div><MomentResults strings={t} response={response} error={null}/></div></section>}
 
         <section className="relative z-10 mx-auto max-w-6xl px-5 py-24"><p className="eyebrow">Search the way you remember</p><div className="mt-8 grid gap-4 md:grid-cols-4">{CAPABILITIES.map(({ icon: Icon, title, copy }) => <article key={title} className="rounded-2xl border border-white/10 bg-ink-900/60 p-5"><Icon className="text-glow" size={20}/><h3 className="mt-5 text-lg text-white">{title}</h3><p className="mt-2 text-sm text-paper-300/55">{copy}</p></article>)}</div></section>
 

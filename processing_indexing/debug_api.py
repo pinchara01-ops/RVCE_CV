@@ -155,6 +155,11 @@ app.include_router(quick_index_router)
 app.include_router(drive_router)
 app.include_router(drive_library_router)
 
+
+@app.get("/api/health", tags=["public"])
+def service_health():
+    return {"status": "ok", "service": "aperture"}
+
 # Local evaluation corpus, served read-only so the Tests page can play the
 # actual files it describes.
 _TEST_ASSETS = Path(__file__).resolve().parent.parent / "test_assets" / "asset_library" / "media"
@@ -812,3 +817,10 @@ def query_verify(request: VerifyRequest):
 @app.get("/api/query/health")
 def query_health():
     return query_api.health()
+
+
+# Registered last so real API routes always win and unknown frontend paths can
+# fall back to index.html for client-side routing.
+from .frontend_hosting import install_frontend  # noqa: E402
+
+install_frontend(app)

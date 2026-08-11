@@ -20,11 +20,15 @@ from processing_indexing.gemini_embeddings import (
     GeminiEmbedding2Adapter,
 )
 from processing_indexing.gemini_runtime import (
+    GeminiAuthenticationError,
     GeminiCallAttempt,
     GeminiCallDiagnostics,
+    GeminiKeyPool,
     GeminiQuotaError,
+    GeminiRetryPolicy,
     GoogleGenAIRuntime,
     call_with_retry,
+    parse_gemini_keys_json,
 )
 from processing_indexing.gemini_transcription import (
     GeminiFlashLiteCaptioner,
@@ -318,6 +322,59 @@ def test_google_runtime_is_lazy_retries_quota_and_redacts_credentials(tmp_path):
     assert state["deleted"] == "files/test"
     assert diagnostics.attempts[0].status == "retrying"
     assert "AIzaSuperSecretKey123456789" not in str(diagnostics.as_dict())
+
+
+def test_google_runtime_rotates_to_next_key_after_quota_failure():
+    attempted_with = []
+
+    class FakeTypes:
+        class GenerateContentConfig:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+    class Client:
+        def __init__(self, key):
+            self.key = key
+            self.models = self
+
+        def generate_content(self, **_kwargs):
+            attempted_with.append(self.key)
+            if self.key == "quota-key":
+                error = RuntimeError("resource exhausted")
+                error.status_code = 429
+                raise error
+            return type("Response", (), {"text": '{"ok": true}'})()
+
+    class FakeGenAI:
+        @staticmethod
+        def Client(*, api_key):
+            return Client(api_key)
+
+    runtime = GoogleGenAIRuntime(
+        key_pool=GeminiKeyPool(["quota-key", "healthy-key"]),
+        sdk_loader=lambda: (FakeGenAI, FakeTypes),
+        retry_policy=GeminiRetryPolicy(
+            max_attempts=2, initial_delay_seconds=0, max_delay_seconds=0
+        ),
+    )
+
+    response, _diagnostics = runtime.generate_json(
+        model="gemini-test",
+        prompt="return JSON",
+    )
+
+    assert response == {"ok": True}
+    assert attempted_with == ["quota-key", "healthy-key"]
+
+
+def test_secret_key_pool_json_never_reflects_invalid_values():
+    assert parse_gemini_keys_json('["key-one", " key-two ", "key-one"]') == (
+        "key-one",
+        "key-two",
+    )
+    with pytest.raises(GeminiAuthenticationError) as raised:
+        parse_gemini_keys_json('{"api_key": "AIzaMustNotLeak123456789"}')
+    assert "AIzaMustNotLeak123456789" not in str(raised.value)
 
 
 def test_retry_stops_after_bounded_quota_attempts_without_secret_leak():
