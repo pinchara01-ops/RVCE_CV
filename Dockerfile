@@ -9,11 +9,13 @@ COPY video_search_frontend/package.json video_search_frontend/package-lock.json 
 RUN npm ci
 COPY video_search_frontend ./
 
-ARG PUBLIC_SITE_URL=https://aperture.uleft.site
+ARG PUBLIC_SITE_URL=https://aperturevideo.up.railway.app
 ARG VITE_PUBLIC_UPLOADS_ENABLED=true
+ARG VITE_GA_MEASUREMENT_ID=G-BK81TVPF9E
 ENV VITE_SITE_URL=${PUBLIC_SITE_URL} \
     VITE_SEARCH_API_URL="" \
-    VITE_PUBLIC_UPLOADS_ENABLED=${VITE_PUBLIC_UPLOADS_ENABLED}
+    VITE_PUBLIC_UPLOADS_ENABLED=${VITE_PUBLIC_UPLOADS_ENABLED} \
+    VITE_GA_MEASUREMENT_ID=${VITE_GA_MEASUREMENT_ID}
 RUN npm run build
 
 FROM python:3.11-slim

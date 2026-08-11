@@ -3,6 +3,7 @@ import { Preprocess } from './pages/Preprocess'
 import { HowItWorks } from './pages/HowItWorks'
 import { Developer } from './pages/Developer'
 import { Design } from './pages/Design'
+import { AnalyticsConsent } from './components/AnalyticsConsent'
 import { usePathname } from './lib/router'
 
 function App() {
@@ -15,7 +16,12 @@ function App() {
     return <Landing />
   })()
 
-  return page
+  return (
+    <>
+      {page}
+      <AnalyticsConsent pathname={pathname} />
+    </>
+  )
 }
 
 export default App
