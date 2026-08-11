@@ -1,0 +1,24 @@
+{
+  "name": "Aperture — Multilingual Video Search",
+  "short_name": "Aperture",
+  "description": "Search long videos using text, voice, images or reference clips and retrieve the exact playable moment.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/aperture-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

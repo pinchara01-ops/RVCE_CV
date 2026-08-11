@@ -9,7 +9,6 @@ const LINKS = [
   { path: '/how-it-works', key: 'navHowItWorks' as const },
   { path: '/preprocess', key: 'navUpload' as const },
   { path: '/design', key: 'navDesign' as const },
-  { path: '/tests', key: 'navTests' as const },
   { path: '/developer', key: 'navDeveloper' as const },
 ]
 
@@ -56,7 +55,7 @@ export function Nav() {
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-1 border-t border-white/10 pt-3 md:hidden">
-          {LINKS.filter((link) => ['/', '/how-it-works', '/tests'].includes(link.path)).map((link) => (
+          {LINKS.filter((link) => ['/', '/how-it-works', '/preprocess'].includes(link.path)).map((link) => (
             <a
               key={link.path}
               href={link.path}

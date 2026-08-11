@@ -31,10 +31,17 @@ test('launch metadata and informational routes remain available', async ({ page 
   await page.goto('/')
   await expect(page).toHaveTitle('Aperture: Multilingual Search for Any Moment in Your Video')
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', /og-aperture\.png$/)
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /favicon\.svg/)
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', '/site.webmanifest')
   await page.goto('/how-it-works')
   await expect(page.locator('h1')).toBeVisible()
   await page.goto('/design')
   await expect(page.locator('h1')).toBeVisible()
+})
+
+test('removed tests route leaves no tests page in the public frontend', async ({ page }) => {
   await page.goto('/tests')
-  await expect(page.getByText('Video with no audio track')).toBeVisible()
+  await expect(page.getByRole('heading', { name: /Search any video archive/i })).toBeVisible()
+  await expect(page.getByRole('link', { name: /^Tests$/i })).toHaveCount(0)
+  await expect(page.getByText('Video with no audio track')).toHaveCount(0)
 })
