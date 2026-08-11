@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import logging
 import math
 import mimetypes
@@ -37,6 +38,13 @@ from .library import (
 )
 from .preflight import model_statuses
 from .probe import VideoProbeError
+from .public_demo import (
+    PublicDemoError,
+    PublicSampleCatalog,
+    SampleNotFound,
+    public_launch_enabled,
+    public_usage,
+)
 from .quick_demo import router as quick_demo_router
 from .quick_index import router as quick_index_router
 from .drive_connector import router as drive_router
@@ -70,6 +78,8 @@ _LOCAL_ORIGINS = [
     "http://127.0.0.1:3017",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
 ]
 # Deployed frontends are added at runtime: set ALLOWED_ORIGINS to a
 # comma-separated list of origins, or to "*" to allow any (demo only).
@@ -80,7 +90,7 @@ _EXTRA_ORIGINS = [
 ]
 # Vercel preview deployments get a new hostname per commit, so match the
 # project's whole subdomain space rather than pinning one URL.
-_ORIGIN_REGEX = os.environ.get("ALLOWED_ORIGIN_REGEX", r"https://.*\.vercel\.app")
+_ORIGIN_REGEX = os.environ.get("ALLOWED_ORIGIN_REGEX") or None
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,7 +98,49 @@ app.add_middleware(
     allow_origin_regex=_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
+
+
+@app.exception_handler(PublicDemoError)
+async def public_demo_error(_request: Request, exc: PublicDemoError):
+    return JSONResponse(status_code=exc.status_code, content=exc.public())
+
+
+_DEVELOPER_PREFIXES = (
+    "/api/runtime",
+    "/api/processing",
+    "/api/index",
+    "/api/diagnostics",
+    "/api/query",
+    "/api/quick/index",
+    "/api/quick/drive",
+    "/api/quick/library",
+    "/search",
+    "/verify",
+)
+
+
+@app.middleware("http")
+async def protect_developer_routes(request: Request, call_next):
+    if public_launch_enabled() and request.url.path.startswith(_DEVELOPER_PREFIXES):
+        enabled = os.environ.get("DEVELOPER_FEATURES_ENABLED", "").lower() == "true"
+        expected = os.environ.get("DEVELOPER_ADMIN_TOKEN", "")
+        supplied = request.headers.get("authorization", "")
+        valid = bool(expected) and supplied.startswith("Bearer ") and hmac.compare_digest(
+            supplied[7:], expected
+        )
+        if not enabled or not valid:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Developer functionality is not available in the public demo.",
+                    }
+                },
+            )
+    return await call_next(request)
 # Ephemeral by design: credentials live only in this process and are cleared on
 # backend restart.  Worker integration reads private config by opaque id; HTTP
 # responses always call RuntimeSession.public().
@@ -103,11 +155,37 @@ app.include_router(quick_index_router)
 app.include_router(drive_router)
 app.include_router(drive_library_router)
 
+
+@app.get("/api/health", tags=["public"])
+def service_health():
+    return {"status": "ok", "service": "aperture"}
+
 # Local evaluation corpus, served read-only so the Tests page can play the
 # actual files it describes.
 _TEST_ASSETS = Path(__file__).resolve().parent.parent / "test_assets" / "asset_library" / "media"
 if _TEST_ASSETS.is_dir():
     app.mount("/api/test-assets", StaticFiles(directory=str(_TEST_ASSETS)), name="test-assets")
+
+_PUBLIC_SAMPLES = PublicSampleCatalog.from_environment()
+
+
+@app.get("/api/public/samples")
+def public_samples():
+    return {"samples": _PUBLIC_SAMPLES.public()}
+
+
+@app.get("/api/public/usage")
+def public_demo_usage(request: Request, response: Response):
+    return {"usage": public_usage(request, response).public()}
+
+
+@app.get("/api/public/samples/{sample_id}/media")
+def public_sample_media(sample_id: str):
+    try:
+        path = _PUBLIC_SAMPLES.resolve(sample_id)
+    except SampleNotFound as exc:
+        raise PublicDemoError(404, "SAMPLE_NOT_FOUND", "That sample is not available.") from exc
+    return FileResponse(path, media_type=mimetypes.guess_type(path.name)[0] or "video/mp4")
 
 
 # An API-based indexing job deliberately owns only per-upload tuning.  Cloud
@@ -240,6 +318,22 @@ async def friendly_upload_parse_error(request: Request, exc: StarletteHTTPExcept
         cause = type(exc.__cause__).__name__ if exc.__cause__ else "unknown"
         logger.warning("Processing upload multipart parse failed (cause=%s)", cause)
         return JSONResponse(status_code=400, content={"detail": MULTIPART_RECOVERY_MESSAGE})
+    if public_launch_enabled() and request.url.path.startswith("/api/quick/"):
+        categories = {
+            400: ("INVALID_QUERY", "Check the request and try again."),
+            413: ("FILE_TOO_LARGE", "The selected file is too large."),
+            415: ("UNSUPPORTED_FILE", "That file type is not supported."),
+            502: ("SEARCH_FAILED", "The live search could not be completed."),
+            504: ("PROCESSING_TIMEOUT", "The search took too long to complete."),
+        }
+        code, message = categories.get(
+            exc.status_code, ("TEMPORARILY_UNAVAILABLE", "This operation is temporarily unavailable.")
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": code, "message": message}},
+            headers=exc.headers,
+        )
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
@@ -723,3 +817,10 @@ def query_verify(request: VerifyRequest):
 @app.get("/api/query/health")
 def query_health():
     return query_api.health()
+
+
+# Registered last so real API routes always win and unknown frontend paths can
+# fall back to index.html for client-side routing.
+from .frontend_hosting import install_frontend  # noqa: E402
+
+install_frontend(app)

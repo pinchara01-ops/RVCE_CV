@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import Any, Protocol, TypeVar
 
 T = TypeVar("T")
@@ -195,6 +196,52 @@ class GeminiRetryPolicy:
         )
 
 
+class GeminiKeyPool:
+    """Thread-safe round-robin selector that never exposes its key values."""
+
+    def __init__(self, keys: Sequence[str]) -> None:
+        normalized = tuple(dict.fromkeys(key.strip() for key in keys if key.strip()))
+        if not normalized:
+            raise GeminiAuthenticationError("At least one Gemini API key is required")
+        self._keys = normalized
+        self._index = 0
+        self._lock = Lock()
+
+    def next_key(self) -> str:
+        with self._lock:
+            key = self._keys[self._index]
+            self._index = (self._index + 1) % len(self._keys)
+            return key
+
+    @property
+    def size(self) -> int:
+        return len(self._keys)
+
+    def __repr__(self) -> str:
+        return f"GeminiKeyPool(size={self.size})"
+
+
+def parse_gemini_keys_json(value: str) -> tuple[str, ...]:
+    """Parse a hosted secret value without reflecting it in errors."""
+
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise GeminiAuthenticationError(
+            "GEMINI_API_KEYS_JSON must be a JSON array of API keys"
+        ) from exc
+    if not isinstance(parsed, list) or any(not isinstance(key, str) for key in parsed):
+        raise GeminiAuthenticationError(
+            "GEMINI_API_KEYS_JSON must be a JSON array of API keys"
+        )
+    keys = tuple(dict.fromkeys(key.strip() for key in parsed if key.strip()))
+    if not keys:
+        raise GeminiAuthenticationError(
+            "GEMINI_API_KEYS_JSON must contain at least one API key"
+        )
+    return keys
+
+
 @dataclass(frozen=True)
 class GeminiCallAttempt:
     attempt: int
@@ -295,18 +342,25 @@ class GoogleGenAIRuntime:
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
+        key_pool: GeminiKeyPool | None = None,
         client: Any | None = None,
         types_module: Any | None = None,
         sdk_loader: Callable[[], tuple[Any, Any]] | None = None,
         retry_policy: GeminiRetryPolicy | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if not api_key or not api_key.strip():
+        if key_pool is not None and api_key is not None:
+            raise ValueError("Provide either api_key or key_pool, not both")
+        if client is None and key_pool is None and (not api_key or not api_key.strip()):
             raise GeminiAuthenticationError("A Gemini API key is required")
         self._api_key = api_key
+        self._key_pool = key_pool
         self._client = client
+        self._clients_by_key: dict[str, Any] = {}
+        self._client_lock = Lock()
         self._types = types_module
+        self._genai: Any | None = None
         self._sdk_loader = sdk_loader or _load_google_sdk
         self.retry_policy = retry_policy or GeminiRetryPolicy()
         self._sleep = sleep
@@ -384,12 +438,30 @@ class GoogleGenAIRuntime:
                 self._delete_file_quietly(client, upload)
 
     def _ensure_client_and_types(self) -> tuple[Any, Any]:
-        if self._client is None or self._types is None:
+        if self._types is None:
             genai, types = self._sdk_loader()
+            self._genai = genai
             self._types = types
-            if self._client is None:
-                self._client = genai.Client(api_key=self._api_key)
-        return self._client, self._types
+        else:
+            genai = self._genai
+        if self._client is not None:
+            return self._client, self._types
+        if self._key_pool is None:
+            if genai is None:
+                genai, _types = self._sdk_loader()
+                self._genai = genai
+            self._client = genai.Client(api_key=self._api_key)
+            return self._client, self._types
+        key = self._key_pool.next_key()
+        with self._client_lock:
+            client = self._clients_by_key.get(key)
+            if client is None:
+                if genai is None:
+                    genai, _types = self._sdk_loader()
+                    self._genai = genai
+                client = genai.Client(api_key=key)
+                self._clients_by_key[key] = client
+        return client, self._types
 
     def _upload_file(self, client: Any, types: Any, path: Path, mime_type: str | None) -> Any:
         if not mime_type:

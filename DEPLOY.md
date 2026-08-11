@@ -1,115 +1,167 @@
-# Deployment
+# Deploy Aperture as one hosted container
 
-## The short version
+Aperture ships as one container. The Docker build compiles the Vite frontend,
+then copies it into the FastAPI image. FastAPI serves the website, API, sample
+media, uploads, generated clips, and SPA route fallbacks from one origin.
 
-**Frontend goes on Vercel. Backend cannot.** Deploy the backend to a container
-host (Render / Railway / Fly.io) and point the frontend at it.
+Recommended public URL: `https://aperture.uleft.site`.
 
-## Why the backend cannot run on Vercel
+## 1. Local production-like run
 
-Not a preference. Four hard limits, any one of which breaks it:
+Build the frontend, then start the unified service from the repository root:
 
-| Limit | Vercel | What we need |
-|---|---|---|
-| Request body | 4.5 MB | Video uploads of 20-650 MB |
-| Function duration | 10s hobby / 60s pro | 30s typical, minutes for long video |
-| Filesystem | Ephemeral, per-invocation | Clips written by one request, served by a later one |
-| Binaries | No ffmpeg | Every request cuts, transcodes, or samples video |
-
-The body-size and filesystem limits are the fatal ones: a 4.5 MB cap makes
-video upload impossible, and `/tmp` is not shared between invocations, so
-`GET /api/quick/clip/...` would 404 even if the search succeeded.
-
----
-
-## 1. Frontend on Vercel
-
-Project root: `video_search_frontend`
-
-| Setting | Value |
-|---|---|
-| Framework preset | Vite |
-| Root directory | `video_search_frontend` |
-| Build command | `npm run build` (default) |
-| Output directory | `dist` (default) |
-
-`vercel.json` is already committed and handles SPA rewrites, which the app
-needs because routing uses the history API (`/developer`, `/tests` etc. would
-otherwise 404 on refresh).
-
-### Environment variable (Vercel dashboard → Settings → Environment Variables)
-
-| Name | Value | Notes |
-|---|---|---|
-| `VITE_SEARCH_API_URL` | `https://your-backend.onrender.com` | No trailing slash. Must be HTTPS or the browser blocks it as mixed content. |
-
-That is the **only** variable the frontend needs. No API keys are baked into
-the frontend build; anything a user types on `/developer` stays in their
-browser's `sessionStorage`.
-
----
-
-## 2. Backend on Render (fastest of the container hosts)
-
-A `Dockerfile` is committed at the repository root.
-
-1. New → Web Service → connect the repo
-2. Runtime: **Docker**, root directory: repository root
-3. Instance type: **at least 1 GB RAM** (ffmpeg re-encoding chunks in parallel)
-4. Health check path: `/api/runtime/profiles`
-
-### Backend environment variables
-
-| Name | Required | Purpose |
-|---|---|---|
-| `GEMINI_API_KEY` | **Yes** | Gemini search, indexing, and voice. The one key that must be set. |
-| `ALLOWED_ORIGINS` | **Yes** | Your Vercel URL, e.g. `https://footageask.vercel.app`. Comma-separated for several. |
-| `OPENAI_API_KEY` | Only for GPT models | Needed if anyone selects an OpenAI model on `/developer`. |
-| `GOOGLE_API_KEY` | Only for Drive | Drive folder listing. Falls back to `GEMINI_API_KEY` if unset. |
-| `QUICK_DEMO_MODEL` | No | Default model. Defaults to `gemini-3.1-flash-lite`. |
-| `ALLOWED_ORIGIN_REGEX` | No | Defaults to `https://.*\.vercel\.app`, which already covers Vercel preview deploys. |
-
-Users can also paste their own keys on `/developer` at runtime, which override
-the server's for that request and are never persisted.
-
----
-
-## 3. Where to get each key
-
-| Key | Where | Cost |
-|---|---|---|
-| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free tier available |
-| `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | Paid, per-token |
-| Drive access | Same Google Cloud project as the Gemini key. **Enable the Drive API**: console → APIs & Services → Enable APIs → "Google Drive API" | Free |
-
-Drive folders must be shared as **"anyone with the link"**. There is no OAuth
-flow, deliberately.
-
----
-
-## 4. Order of operations
-
-1. Deploy the backend first, note its URL
-2. Set `ALLOWED_ORIGINS` on the backend once you know the Vercel URL
-3. Deploy the frontend with `VITE_SEARCH_API_URL` pointing at the backend
-4. Redeploy the frontend after changing that variable — Vite inlines it at
-   **build** time, so a change does not take effect until you rebuild
-
-## 5. Checking it works
-
-```bash
-curl https://your-backend.example.com/api/runtime/profiles
+```powershell
+Set-Location video_search_frontend
+$env:VITE_SITE_URL='http://localhost:8080'
+npm ci
+npm run build
+Set-Location ..
+$env:PORT='8080'
+python -m uvicorn processing_indexing.debug_api:app --host 0.0.0.0 --port 8080
 ```
 
-Then open the Vercel URL and run a search. If the browser console shows a CORS
-error, `ALLOWED_ORIGINS` does not match your actual Vercel origin.
+Open `http://localhost:8080`. Requests under `/api` stay API requests; all
+other application routes fall back to the compiled `index.html`.
 
-## Known constraints in production
+## 2. Railway
 
-- **Cold starts.** Render's free tier sleeps after inactivity; the first
-  request can take ~50s to wake. Use a paid instance for a live demo.
-- **Upload time.** A 600 MB video over a conference connection is the slowest
-  part of the run, not the model.
-- **Clip lifetime.** Cut clips live in the container's temp directory and are
-  lost on restart or redeploy. Fine for a demo; a persistent store would be
-  needed for anything real.
+Create a Railway project from this repository and select the
+`product-hunt-launch` branch. Railway detects the root `Dockerfile`; the
+checked-in `railway.json` configures `/api/health` as the deployment health
+check.
+
+Generate a public domain, then add these service variables in Railway:
+
+```text
+GEMINI_API_KEYS_JSON=["first-key","second-key"]
+PUBLIC_LAUNCH_MODE=true
+PUBLIC_UPLOADS_ENABLED=true
+PUBLIC_DEMO_MAX_VIDEO_BYTES=26214400
+VISITOR_COOKIE_SECRET=<independent random value, at least 32 bytes>
+IP_HASH_SECRET=<different random value, at least 32 bytes>
+UPSTASH_REDIS_REST_URL=<server-only Upstash REST URL>
+UPSTASH_REDIS_REST_TOKEN=<server-only Upstash REST token>
+ALLOWED_ORIGINS=https://<generated Railway domain>
+```
+
+Do not add the key pool to a `VITE_*` variable. The backend parses the JSON
+array once, cycles keys round-robin, and advances to the next key on bounded
+quota or transient retries. A key pool is operational failover, not a way to
+bypass provider project/account limits.
+
+Railway injects `PORT`; do not define it manually. Keep one replica initially
+because uploads and generated clips use the instance's temporary filesystem.
+After deployment, verify:
+
+```bash
+curl https://YOUR_RAILWAY_DOMAIN/api/health
+curl https://YOUR_RAILWAY_DOMAIN/api/public/samples
+```
+
+The repository contains sample media in the image. Personal uploads are
+temporary and can disappear when Railway restarts or redeploys the service.
+
+## 3. Google Cloud prerequisites
+
+Select the project and enable the required services:
+
+```bash
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com
+```
+
+Create independent secrets in Secret Manager through the Google Cloud console:
+
+- `aperture-gemini-api-key`
+- `aperture-visitor-cookie-secret`
+- `aperture-ip-hash-secret`
+- `aperture-upstash-url`
+- `aperture-upstash-token`
+
+Secret values must never be passed in shell history or committed files.
+
+## 4. Deploy to Cloud Run
+
+From the repository root:
+
+```bash
+gcloud run deploy aperture \
+  --source . \
+  --region asia-south1 \
+  --allow-unauthenticated \
+  --memory 2Gi \
+  --cpu 2 \
+  --concurrency 4 \
+  --timeout 900 \
+  --min-instances 1 \
+  --max-instances 4 \
+  --set-env-vars PUBLIC_LAUNCH_MODE=true,PUBLIC_UPLOADS_ENABLED=true,PUBLIC_DEMO_MAX_VIDEO_BYTES=26214400 \
+  --set-secrets GEMINI_API_KEY=aperture-gemini-api-key:latest,VISITOR_COOKIE_SECRET=aperture-visitor-cookie-secret:latest,IP_HASH_SECRET=aperture-ip-hash-secret:latest,UPSTASH_REDIS_REST_URL=aperture-upstash-url:latest,UPSTASH_REDIS_REST_TOKEN=aperture-upstash-token:latest
+```
+
+The image already contains the two approved public samples and ffmpeg. The
+sample path environment variables are optional overrides.
+
+The hosted image installs `requirements-cloudrun.txt`. Heavy local-model
+packages remain available through the existing self-hosted requirements but
+are deliberately excluded from the Gemini-based public image.
+
+## 5. Domain
+
+Because the owned domain is `uleft.site`, use `aperture.uleft.site`. The name
+`uleft.aperture.site` would require control of `aperture.site`.
+
+For launch traffic, put a global external Application Load Balancer with a
+serverless NEG in front of the Cloud Run service, attach a Google-managed TLS
+certificate for `aperture.uleft.site`, and add the DNS record Google provides.
+This keeps the frontend and API same-origin and preserves the secure visitor
+cookie. Direct Cloud Run domain mapping can be used where supported, but the
+load balancer is the stronger production configuration.
+
+After the custom domain is active, set:
+
+```text
+ALLOWED_ORIGINS=https://aperture.uleft.site
+```
+
+The frontend uses same-origin API URLs in production, so no separate frontend
+API URL is required.
+
+## 6. Required runtime configuration
+
+| Variable | Purpose |
+|---|---|
+| `GEMINI_API_KEYS_JSON` | Preferred server-side JSON array used for live-search key rotation. |
+| `GEMINI_API_KEY` | Optional single-key fallback for local compatibility. |
+| `PUBLIC_LAUNCH_MODE=true` | Enables public quotas and protects developer routes. |
+| `PUBLIC_UPLOADS_ENABLED=true` | Enables one temporary personal video per operation. |
+| `VISITOR_COOKIE_SECRET` | Signs the opaque secure visitor cookie. Minimum 32 random bytes. |
+| `IP_HASH_SECRET` | HMAC-hashes request IPs. Minimum 32 independent random bytes. |
+| `UPSTASH_REDIS_REST_URL` | Durable atomic quota/idempotency store. |
+| `UPSTASH_REDIS_REST_TOKEN` | Server-only Redis credential. |
+| `ALLOWED_ORIGINS` | Exact public origin after the custom domain is connected. |
+
+Optional provider and developer variables remain documented in `.env.example`.
+
+## 7. Verification
+
+```bash
+curl https://YOUR_RUN_URL/api/health
+curl https://YOUR_RUN_URL/api/public/samples
+```
+
+Then verify sample search, personal upload, quota persistence, result playback,
+refresh behavior, another tab, mobile layout, `/tests`, `/design`, and
+`/how-it-works`.
+
+## Operational constraints
+
+- Anonymous personal uploads are limited to 25 MB to remain below Cloud Run's
+  HTTP/1 request limit after multipart overhead.
+- Generated clips and uploads use the instance's temporary filesystem and can
+  disappear on restart. They are intended for immediate demo playback.
+- Keep at least one instance warm during the launch to avoid cold-start delay.
+- Upstash must be available; paid live operations fail closed when the limiter
+  is unavailable.
+- Use project budgets, Gemini quotas, Cloud Run maximum instances, and Upstash
+  limits together to bound launch costs.

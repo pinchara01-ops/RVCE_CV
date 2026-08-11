@@ -46,7 +46,6 @@ export interface Strings {
   navHowItWorks: string
   navUpload: string
   navDesign: string
-  navTests: string
   navDeveloper: string
   matchSuffix: string
   searchFailed: string
@@ -82,17 +81,6 @@ export interface Strings {
   howTitle: string
   howEmphasis: string
   howSubtitle: string
-  // Tests page
-  testsTitle: string
-  testsSubtitle: string
-  placeholderBanner: string
-  placeholderBannerBody: string
-  challengeLabel: string
-  handledLabel: string
-  queryLabel: string
-  tryItOut: string
-  runningLabel: string
-  walkthroughDone: string
   // Developer page
   developerTitle: string
   developerSubtitle: string
@@ -170,7 +158,6 @@ const en: Strings = {
   navHowItWorks: 'How it works',
   navUpload: 'Preprocess',
   navDesign: 'Design',
-  navTests: 'Tests',
   navDeveloper: 'Developer',
   matchSuffix: 'match',
   searchFailed: 'The search could not be completed.',
@@ -206,18 +193,6 @@ const en: Strings = {
   howTitle: 'How it',
   howEmphasis: 'works',
   howSubtitle: 'The path a video takes from upload to a playable answer.',
-  testsTitle: 'Edge cases',
-  testsSubtitle:
-    'Inputs chosen to stress a specific assumption in the architecture, rather than to show it working on easy footage.',
-  placeholderBanner: 'Metrics on this page are placeholders pending real runs, not measured results.',
-  placeholderBannerBody:
-    'Every card is marked placeholder and “Try it out” replays a scripted walkthrough on a timer.',
-  challengeLabel: 'Challenge',
-  handledLabel: 'How the architecture handles it',
-  queryLabel: 'Query',
-  tryItOut: 'Try it out',
-  runningLabel: 'Running…',
-  walkthroughDone: 'Scripted replay, not a live run.',
   developerTitle: 'Developer',
   developerSubtitle: 'Runtime configuration for this browser. Applied to the next run.',
   deploymentProfile: 'Deployment profile',
@@ -284,16 +259,6 @@ const hi: Strings = {
   howTitle: 'यह कैसे',
   howEmphasis: 'काम करता है',
   howSubtitle: 'अपलोड से चलाने योग्य उत्तर तक वीडियो का मार्ग।',
-  testsTitle: 'किनारे के मामले',
-  testsSubtitle: 'ऐसे इनपुट जो आर्किटेक्चर की किसी विशिष्ट धारणा पर दबाव डालते हैं, न कि आसान फुटेज पर काम दिखाने के लिए।',
-  placeholderBanner: 'इस पृष्ठ के आँकड़े प्लेसहोल्डर हैं, मापे गए परिणाम नहीं।',
-  placeholderBannerBody: 'हर कार्ड प्लेसहोल्डर चिह्नित है और “आज़माएँ” एक स्क्रिप्टेड वॉकथ्रू चलाता है।',
-  challengeLabel: 'चुनौती',
-  handledLabel: 'आर्किटेक्चर इसे कैसे संभालता है',
-  queryLabel: 'प्रश्न',
-  tryItOut: 'आज़माएँ',
-  runningLabel: 'चल रहा है…',
-  walkthroughDone: 'स्क्रिप्टेड रीप्ले, लाइव रन नहीं।',
   developerTitle: 'डेवलपर',
   developerSubtitle: 'इस ब्राउज़र के लिए रनटाइम कॉन्फ़िगरेशन। अगले रन पर लागू।',
   deploymentProfile: 'तैनाती प्रोफ़ाइल',
@@ -348,7 +313,6 @@ const hi: Strings = {
   startOver: 'फिर से शुरू करें',
   navHowItWorks: 'यह कैसे काम करता है',
   navUpload: 'प्रीप्रोसेस',
-  navTests: 'परीक्षण',
   navDeveloper: 'डेवलपर',
   matchSuffix: 'मेल',
 }
@@ -379,16 +343,6 @@ const kn: Strings = {
   howTitle: 'ಇದು ಹೇಗೆ',
   howEmphasis: 'ಕೆಲಸ ಮಾಡುತ್ತದೆ',
   howSubtitle: 'ಅಪ್‌ಲೋಡ್‌ನಿಂದ ಪ್ಲೇ ಮಾಡಬಹುದಾದ ಉತ್ತರದವರೆಗೆ ವೀಡಿಯೊದ ಹಾದಿ.',
-  testsTitle: 'ಅಂಚಿನ ಪ್ರಕರಣಗಳು',
-  testsSubtitle: 'ಸುಲಭ ದೃಶ್ಯಾವಳಿಯಲ್ಲಿ ಕೆಲಸ ತೋರಿಸುವ ಬದಲು ಆರ್ಕಿಟೆಕ್ಚರ್‌ನ ನಿರ್ದಿಷ್ಟ ಊಹೆಯನ್ನು ಒತ್ತಡಕ್ಕೆ ಒಳಪಡಿಸುವ ಇನ್‌ಪುಟ್‌ಗಳು.',
-  placeholderBanner: 'ಈ ಪುಟದ ಅಳತೆಗಳು ಪ್ಲೇಸ್‌ಹೋಲ್ಡರ್, ಅಳೆದ ಫಲಿತಾಂಶಗಳಲ್ಲ.',
-  placeholderBannerBody: 'ಪ್ರತಿ ಕಾರ್ಡ್ ಪ್ಲೇಸ್‌ಹೋಲ್ಡರ್ ಎಂದು ಗುರುತಿಸಲಾಗಿದೆ.',
-  challengeLabel: 'ಸವಾಲು',
-  handledLabel: 'ಆರ್ಕಿಟೆಕ್ಚರ್ ಇದನ್ನು ಹೇಗೆ ನಿಭಾಯಿಸುತ್ತದೆ',
-  queryLabel: 'ಪ್ರಶ್ನೆ',
-  tryItOut: 'ಪ್ರಯತ್ನಿಸಿ',
-  runningLabel: 'ನಡೆಯುತ್ತಿದೆ…',
-  walkthroughDone: 'ಸ್ಕ್ರಿಪ್ಟೆಡ್ ಮರುಪ್ಲೇ, ನೇರ ರನ್ ಅಲ್ಲ.',
   developerTitle: 'ಡೆವಲಪರ್',
   developerSubtitle: 'ಈ ಬ್ರೌಸರ್‌ಗಾಗಿ ರನ್‌ಟೈಮ್ ಸಂರಚನೆ.',
   deploymentProfile: 'ನಿಯೋಜನೆ ಪ್ರೊಫೈಲ್',
@@ -443,7 +397,6 @@ const kn: Strings = {
   startOver: 'ಮತ್ತೆ ಪ್ರಾರಂಭಿಸಿ',
   navHowItWorks: 'ಇದು ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ',
   navUpload: 'ಪೂರ್ವಸಂಸ್ಕರಣೆ',
-  navTests: 'ಪರೀಕ್ಷೆಗಳು',
   navDeveloper: 'ಡೆವಲಪರ್',
   matchSuffix: 'ಹೊಂದಾಣಿಕೆ',
 }
@@ -490,7 +443,6 @@ const bn: Strings = {
   startOver: 'আবার শুরু করুন',
   navHowItWorks: 'এটি কীভাবে কাজ করে',
   navUpload: 'প্রিপ্রসেস',
-  navTests: 'পরীক্ষা',
   navDeveloper: 'ডেভেলপার',
   matchSuffix: 'মিল',
 }
@@ -521,16 +473,6 @@ const ta: Strings = {
   howTitle: 'இது எப்படி',
   howEmphasis: 'வேலை செய்கிறது',
   howSubtitle: 'பதிவேற்றத்திலிருந்து இயக்கக்கூடிய பதில் வரை வீடியோவின் பாதை.',
-  testsTitle: 'விளிம்பு நிலைகள்',
-  testsSubtitle: 'எளிய காணொளியில் வேலை செய்வதைக் காட்டுவதற்குப் பதிலாக கட்டமைப்பின் குறிப்பிட்ட அனுமானத்தை அழுத்தும் உள்ளீடுகள்.',
-  placeholderBanner: 'இப்பக்கத்தின் அளவீடுகள் இடமீட்புகள், அளக்கப்பட்ட முடிவுகள் அல்ல.',
-  placeholderBannerBody: 'ஒவ்வொரு அட்டையும் இடமீட்பு எனக் குறிக்கப்பட்டுள்ளது.',
-  challengeLabel: 'சவால்',
-  handledLabel: 'கட்டமைப்பு இதை எப்படிக் கையாள்கிறது',
-  queryLabel: 'வினவல்',
-  tryItOut: 'முயற்சி செய்',
-  runningLabel: 'இயங்குகிறது…',
-  walkthroughDone: 'ஸ்கிரிப்ட் மறுஒளிபரப்பு, நேரடி இயக்கம் அல்ல.',
   developerTitle: 'உருவாக்குநர்',
   developerSubtitle: 'இந்த உலாவிக்கான இயக்க நேர அமைப்பு.',
   deploymentProfile: 'வரிசைப்படுத்தல் சுயவிவரம்',
@@ -585,7 +527,6 @@ const ta: Strings = {
   startOver: 'மீண்டும் தொடங்கு',
   navHowItWorks: 'இது எப்படி வேலை செய்கிறது',
   navUpload: 'முன்செயலாக்கம்',
-  navTests: 'சோதனைகள்',
   navDeveloper: 'உருவாக்குநர்',
   matchSuffix: 'பொருத்தம்',
 }
@@ -632,7 +573,6 @@ const te: Strings = {
   startOver: 'మళ్లీ ప్రారంభించండి',
   navHowItWorks: 'ఇది ఎలా పనిచేస్తుంది',
   navUpload: 'ప్రీప్రాసెస్',
-  navTests: 'పరీక్షలు',
   navDeveloper: 'డెవలపర్',
   matchSuffix: 'సరిపోలిక',
 }
